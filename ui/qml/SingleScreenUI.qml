@@ -321,19 +321,21 @@ ApplicationWindow {
                             spacing: 8
 
                             delegate: Rectangle {
+                                property bool sung: root.bridge && root.bridge.currentLyricIndex >= 0 && index < root.bridge.currentLyricIndex
+
                                 width: lyricList.width
-                                height: ListView.isCurrentItem ? 72 : 44
+                                height: ListView.isCurrentItem ? 72 : (sung ? 56 : 42)
                                 radius: 10
-                                color: ListView.isCurrentItem ? root.accentSoft : "transparent"
-                                opacity: ListView.isCurrentItem ? 0.96 : 1.0
+                                color: ListView.isCurrentItem ? root.accentSoft : (sung ? "#1b1322" : "transparent")
+                                opacity: ListView.isCurrentItem ? 0.96 : (sung ? 0.9 : 1.0)
 
                                 Text {
                                     anchors.centerIn: parent
                                     width: parent.width - 48
                                     text: modelData
-                                    color: ListView.isCurrentItem ? root.accent : root.textMuted
-                                    font.pixelSize: ListView.isCurrentItem ? 30 : 21
-                                    font.bold: ListView.isCurrentItem
+                                    color: ListView.isCurrentItem ? root.accent : (parent.sung ? "#d8bfd2" : root.textMuted)
+                                    font.pixelSize: ListView.isCurrentItem ? 30 : (parent.sung ? 25 : 20)
+                                    font.bold: ListView.isCurrentItem || parent.sung
                                     horizontalAlignment: Text.AlignHCenter
                                     elide: Text.ElideRight
                                 }
