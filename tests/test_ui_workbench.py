@@ -1,4 +1,4 @@
-from ui.main_window import WorkbenchBridge, resolve_demucs_python
+from ui.main_window import WorkbenchBridge, format_user_error, resolve_demucs_python
 from core_engine.player.sounddevice_output import AudioOutputDevice
 
 
@@ -24,6 +24,8 @@ def test_workbench_bridge_playback_and_lyrics_state(tmp_path):
     assert bridge.isPlaying
     assert bridge.playbackProgress > 0.0
     assert bridge.currentLyric
+    assert bridge.lyricLines == ["样例前奏", "跑调预览", "可以导出"]
+    assert bridge.currentLyricIndex >= 0
 
     bridge.seekProgress(0.8)
     assert bridge.playbackProgress >= 0.75
@@ -173,6 +175,35 @@ def test_workbench_bridge_imports_with_selected_backends(tmp_path):
     assert bridge.lyricsBackend == "none"
     assert bridge.vocalPath.endswith("vocal.wav")
     assert "separator=preview" in bridge.status
+
+
+def test_workbench_bridge_standardizes_compressed_import_when_ffmpeg_exists(tmp_path, monkeypatch):
+    bridge = WorkbenchBridge(tmp_path)
+    compressed = tmp_path / "song.m4a"
+    compressed.write_bytes(b"fake")
+    fake_ffmpeg = tmp_path / "ffmpeg.exe"
+    fake_ffmpeg.write_text("fake", encoding="utf-8")
+
+    monkeypatch.setattr("ui.main_window.resolve_audio_tool", lambda _name, _root: str(fake_ffmpeg))
+
+    config = bridge._build_import_config(compressed, "preview", "preview")
+
+    assert config.audio_standardizer is not None
+
+
+def test_workbench_bridge_does_not_standardize_wav_import(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    wav = tmp_path / "song.wav"
+    wav.write_bytes(b"fake")
+
+    config = bridge._build_import_config(wav, "preview", "preview")
+
+    assert config.audio_standardizer is None
+
+
+def test_format_user_error_translates_unreadable_audio_format():
+    assert "导入失败" in format_user_error("soundfile.LibsndfileError: Format not recognised")
+    assert "ffmpeg" in format_user_error("soundfile.LibsndfileError: Format not recognised")
 
 
 def test_workbench_bridge_reports_busy_import_guard(tmp_path):

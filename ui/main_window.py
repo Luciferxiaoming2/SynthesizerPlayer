@@ -9,6 +9,7 @@ from PyQt6.QtCore import QObject, QThread, QTimer, QUrl, pyqtProperty, pyqtSigna
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQml import QQmlApplicationEngine
 
+from core_engine.external_tools import FfmpegAudioStandardizer, FfmpegConfig, resolve_audio_tool
 from core_engine.exporter.audio_export import AudioExportConfig, export_processed_mix
 from core_engine.importer import SongImportConfig, import_single_song
 from core_engine.library.song_scanner import SongAsset, scan_song_library
@@ -91,6 +92,8 @@ class WorkbenchBridge(QObject):
         self._audio_output: SoundDeviceOutput | None = None
         self._audio_output_active = False
         self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]))
+        self._lyric_lines: list[str] = []
+        self._current_lyric_index = -1
         self._current_lyric = ""
         self._next_lyric = ""
         self._playback_timer = QTimer(self)
@@ -228,6 +231,14 @@ class WorkbenchBridge(QObject):
     def nextLyric(self) -> str:
         return self._next_lyric
 
+    @pyqtProperty("QStringList", notify=lyricsChanged)
+    def lyricLines(self) -> list[str]:
+        return list(self._lyric_lines)
+
+    @pyqtProperty(int, notify=lyricsChanged)
+    def currentLyricIndex(self) -> int:
+        return self._current_lyric_index
+
     @pyqtSlot()
     def generateMockAudio(self) -> None:
         try:
@@ -236,7 +247,7 @@ class WorkbenchBridge(QObject):
             write_audio(self._vocal_path, vocal, 16_000)
             write_audio(self._instrumental_path, instrumental, 16_000)
             self._lyrics_path.write_text(
-                "[00:00.000]Mock intro\n[00:00.700]Tone drift preview\n[00:01.400]Export ready",
+                "[00:00.000]样例前奏\n[00:00.700]跑调预览\n[00:01.400]可以导出",
                 encoding="utf-8",
             )
             self.loadPlayback()
@@ -248,7 +259,9 @@ class WorkbenchBridge(QObject):
     def loadPlayback(self) -> None:
         try:
             self._playback = DualTrackPlaybackEngine(load_stem_pair(self._vocal_path, self._instrumental_path))
-            self._lyrics_sync = LyricPlaybackSynchronizer(load_lyrics_timeline(self._lyrics_path))
+            timeline = load_lyrics_timeline(self._lyrics_path)
+            self._lyrics_sync = LyricPlaybackSynchronizer(timeline)
+            self._lyric_lines = timeline.texts()
             self._update_lyrics()
             self.playbackChanged.emit()
             self._set_status("音频已加载，可以点击“播放”试听")
@@ -432,7 +445,7 @@ class WorkbenchBridge(QObject):
             )
             self._apply_imported_project(project, separator_backend, lyrics_backend)
         except Exception:
-            self._set_status(traceback.format_exc(limit=1).strip())
+            self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
 
     @pyqtSlot(str, str, str)
     def importSongWithBackendsAsync(
@@ -446,7 +459,7 @@ class WorkbenchBridge(QObject):
         self._lyrics_backend = lyrics_backend
         self.importOptionsChanged.emit()
         self._set_import_busy(True)
-        self._set_status(f"Importing song... (separator={separator_backend}, lyrics={lyrics_backend})")
+        self._set_status(f"正在导入歌曲... 分离={separator_backend}，歌词={lyrics_backend}")
 
         self._import_thread = QThread(self)
         self._import_worker = ImportSongWorker(
@@ -490,7 +503,7 @@ class WorkbenchBridge(QObject):
         except Exception:
             self._songs = []
             self.songsChanged.emit()
-            self._set_status(traceback.format_exc(limit=1).strip())
+            self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
 
     @pyqtSlot(int)
     def loadSongAt(self, index: int) -> None:
@@ -504,13 +517,15 @@ class WorkbenchBridge(QObject):
             if session.asset.lyrics_path is not None:
                 self._lyrics_path = session.asset.lyrics_path
             self._output_path = self._mock_dir / f"{sanitize_filename(session.asset.name)}_export.wav"
-            self._lyrics_sync = session.lyric_sync()
+            timeline = load_lyrics_timeline(self._lyrics_path)
+            self._lyrics_sync = LyricPlaybackSynchronizer(timeline)
+            self._lyric_lines = timeline.texts()
             self.pathsChanged.emit()
             self.lyricsChanged.emit()
             self._set_status(f"Loaded song: {session.asset.name}")
             self.loadPlayback()
         except Exception:
-            self._set_status(traceback.format_exc(limit=1).strip())
+            self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
 
     @pyqtSlot()
     def advancePlayback(self) -> None:
@@ -569,6 +584,7 @@ class WorkbenchBridge(QObject):
         if self._playback is not None:
             position_ms = round(self._playback.position_seconds * 1_000)
         state = self._lyrics_sync.state_at(position_ms)
+        self._current_lyric_index = -1 if state.current_index is None else state.current_index
         self._current_lyric = state.current_text or "..."
         self._next_lyric = "" if state.next_line is None else state.next_line.text
         self.lyricsChanged.emit()
@@ -599,6 +615,7 @@ class WorkbenchBridge(QObject):
             projects_root=self._projects_root,
             separator=self._build_separator(separator_backend),
             lyrics_transcriber=self._build_lyrics_transcriber(lyrics_backend),
+            audio_standardizer=self._build_audio_standardizer(source_path),
             separator_backend=separator_backend,
             lyrics_backend=lyrics_backend,
         )
@@ -608,6 +625,9 @@ class WorkbenchBridge(QObject):
         self._instrumental_path = project.stems.instrumental_path
         if project.lyrics_path is not None:
             self._lyrics_path = project.lyrics_path
+        else:
+            self._lyric_lines = []
+            self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]))
         self._output_path = project.project_dir / f"{project.name}_export.wav"
         self.pathsChanged.emit()
         self.loadPlayback()
@@ -624,7 +644,7 @@ class WorkbenchBridge(QObject):
     @pyqtSlot(str)
     def _handle_import_failed(self, message: str) -> None:
         self._set_import_busy(False)
-        self._set_status(message)
+        self._set_status(format_user_error(message))
 
     @pyqtSlot()
     def _cleanup_import_thread(self) -> None:
@@ -672,6 +692,15 @@ class WorkbenchBridge(QObject):
             return None
         return PreviewLyricsTranscriber()
 
+    def _build_audio_standardizer(self, source_path: Path) -> FfmpegAudioStandardizer | None:
+        if source_path.suffix.lower() == ".wav":
+            return None
+        try:
+            ffmpeg = resolve_audio_tool("ffmpeg", self._root)
+        except FileNotFoundError:
+            return None
+        return FfmpegAudioStandardizer(FfmpegConfig(executable=ffmpeg))
+
     def _set_status(self, value: str) -> None:
         self._status = value
         self.statusChanged.emit()
@@ -685,6 +714,18 @@ def format_seconds(seconds: float) -> str:
 
 def sanitize_filename(value: str) -> str:
     return "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in value).strip("_") or "song"
+
+
+def format_user_error(message: str) -> str:
+    if "Format not recognised" in message or "Format not recognized" in message:
+        return "导入失败：当前音频格式不能直接读取。请确认 ffmpeg 已放在 plugins/models/ffmpeg，或先转换为 wav。"
+    if "ffmpeg" in message and "not found" in message:
+        return "导入失败：没有找到 ffmpeg，无法兼容 mp3/m4a/aac 等格式。请把 ffmpeg 放到 plugins/models/ffmpeg。"
+    if "FileNotFoundError" in message or "source song not found" in message:
+        return "导入失败：没有找到选择的音乐文件，请检查文件是否被移动或删除。"
+    if "CalledProcessError" in message:
+        return "导入失败：外部工具执行失败，请换一首歌测试，或查看文件是否损坏。"
+    return message
 
 
 def first_existing_dir(*candidates: Path) -> Path | None:

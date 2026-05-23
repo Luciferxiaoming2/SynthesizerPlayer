@@ -61,6 +61,49 @@ ApplicationWindow {
         onAccepted: if (root.bridge) root.bridge.setMasterPluginFromUrl(selectedFile.toString())
     }
 
+    Popup {
+        id: statusPopup
+        anchors.centerIn: parent
+        width: Math.min(parent.width * 0.72, 760)
+        modal: false
+        focus: false
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        padding: 18
+
+        background: Rectangle {
+            radius: 8
+            color: "#24152a"
+            border.color: root.accent
+            opacity: 0.96
+        }
+
+        Text {
+            width: parent.width
+            text: root.bridge ? root.bridge.status : ""
+            color: root.textMain
+            font.pixelSize: 15
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+        }
+    }
+
+    Timer {
+        id: statusPopupTimer
+        interval: 3600
+        repeat: false
+        onTriggered: statusPopup.close()
+    }
+
+    Connections {
+        target: root.bridge
+        function onStatusChanged() {
+            if (!root.bridge || root.bridge.status === "" || root.bridge.status === "Ready")
+                return
+            statusPopup.open()
+            statusPopupTimer.restart()
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         color: root.bg
@@ -246,41 +289,47 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
 
-                        Column {
-                            anchors.centerIn: parent
-                            width: parent.width
-                            spacing: 22
+                        ListView {
+                            id: lyricList
+                            anchors.fill: parent
+                            clip: true
+                            model: root.bridge ? root.bridge.lyricLines : []
+                            currentIndex: root.bridge ? root.bridge.currentLyricIndex : -1
+                            preferredHighlightBegin: height * 0.42
+                            preferredHighlightEnd: height * 0.58
+                            highlightRangeMode: ListView.StrictlyEnforceRange
+                            boundsBehavior: Flickable.StopAtBounds
+                            spacing: 8
 
-                            LyricLine { text: "那又如何"; size: 22; muted: true }
-                            LyricLine { text: "他好像爱我"; size: 22; muted: true }
-
-                            Rectangle {
-                                width: parent.width * 0.88
-                                height: 68
-                                anchors.horizontalCenter: parent.horizontalCenter
+                            delegate: Rectangle {
+                                width: lyricList.width
+                                height: ListView.isCurrentItem ? 72 : 44
                                 radius: 10
-                                color: root.accentSoft
-                                opacity: 0.92
+                                color: ListView.isCurrentItem ? root.accentSoft : "transparent"
+                                opacity: ListView.isCurrentItem ? 0.96 : 1.0
 
                                 Text {
                                     anchors.centerIn: parent
-                                    text: root.bridge ? root.bridge.currentLyric : "等待加载歌词"
-                                    color: root.accent
-                                    font.pixelSize: 30
-                                    font.bold: true
-                                    elide: Text.ElideRight
-                                    width: parent.width - 40
+                                    width: parent.width - 48
+                                    text: modelData
+                                    color: ListView.isCurrentItem ? root.accent : root.textMuted
+                                    font.pixelSize: ListView.isCurrentItem ? 30 : 21
+                                    font.bold: ListView.isCurrentItem
                                     horizontalAlignment: Text.AlignHCenter
+                                    elide: Text.ElideRight
                                 }
                             }
+                        }
 
-                            LyricLine {
-                                text: root.bridge ? root.bridge.nextLyric : ""
-                                size: 22
-                                muted: true
-                            }
-                            LyricLine { text: "原来都是我想像的"; size: 21; muted: true }
-                            LyricLine { text: "我也曾快乐"; size: 20; muted: true }
+                        Text {
+                            anchors.centerIn: parent
+                            visible: !root.bridge || root.bridge.lyricLines.length === 0
+                            text: "暂无歌词：可导入 .lrc/.srt，或导入歌曲时选择 preview/faster-whisper 歌词后端"
+                            color: root.textMuted
+                            font.pixelSize: 18
+                            width: parent.width * 0.86
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
                         }
                     }
                 }
