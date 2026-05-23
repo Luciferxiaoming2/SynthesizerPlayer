@@ -26,6 +26,9 @@ build/
 dist/
 release/
 site/
+node_modules/
+ui/web/node_modules/
+ui/web/dist/
 *.egg-info/
 *.egg
 
