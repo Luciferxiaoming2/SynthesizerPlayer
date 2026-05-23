@@ -25,6 +25,18 @@ ApplicationWindow {
     property color textMuted: "#a89bad"
     property color gold: "#f4bd62"
 
+    function selectedSeparatorBackend() {
+        if (!root.bridge || separatorPicker.currentIndex < 0)
+            return "preview"
+        return root.bridge.separatorBackends[separatorPicker.currentIndex]
+    }
+
+    function selectedLyricsBackend() {
+        if (!root.bridge || lyricsBackendPicker.currentIndex < 0)
+            return "preview"
+        return root.bridge.lyricsBackends[lyricsBackendPicker.currentIndex]
+    }
+
     Component.onCompleted: if (root.bridge) root.bridge.refreshAudioDevices()
 
     FileDialog {
@@ -37,7 +49,7 @@ ApplicationWindow {
         id: songImportDialog
         title: "导入完整歌曲"
         nameFilters: ["音频文件 (*.wav *.mp3 *.flac *.ogg *.m4a *.aac)", "所有文件 (*)"]
-        onAccepted: if (root.bridge) root.bridge.importSongWithBackendsAsync(selectedFile.toString(), separatorPicker.currentText, lyricsBackendPicker.currentText)
+        onAccepted: if (root.bridge) root.bridge.importSongWithBackendsAsync(selectedFile.toString(), root.selectedSeparatorBackend(), root.selectedLyricsBackend())
     }
 
     FileDialog {
@@ -345,7 +357,7 @@ ApplicationWindow {
                         Text {
                             anchors.centerIn: parent
                             visible: !root.bridge || root.bridge.lyricLines.length === 0
-                            text: "纯音乐或暂无歌词：可导入同名 .lrc/.srt，或选择 faster-whisper 识别原始语言歌词"
+                            text: "纯音乐或暂无歌词：可导入同名 .lrc/.srt，或点“生成歌词”。本地识别需要先安装 faster-whisper。"
                             color: root.textMuted
                             font.pixelSize: 18
                             width: parent.width * 0.86
@@ -453,6 +465,13 @@ ApplicationWindow {
                     }
 
                     Button {
+                        text: "生成歌词"
+                        enabled: !(root.bridge && root.bridge.importBusy)
+                        Layout.preferredWidth: 96
+                        onClicked: if (root.bridge) root.bridge.generateLyrics()
+                    }
+
+                    Button {
                         text: "加载"
                         enabled: !(root.bridge && root.bridge.importBusy)
                         Layout.preferredWidth: 86
@@ -548,10 +567,10 @@ ApplicationWindow {
 
                     ComboBox {
                         id: separatorPicker
-                        model: root.bridge ? root.bridge.separatorBackends : []
+                        model: root.bridge ? root.bridge.separatorBackendLabels : []
                         currentIndex: 0
-                        Layout.preferredWidth: 150
-                        onActivated: if (root.bridge) root.bridge.setSeparatorBackend(currentText)
+                        Layout.preferredWidth: 158
+                        onActivated: if (root.bridge) root.bridge.setSeparatorBackend(root.selectedSeparatorBackend())
                     }
 
                     Text {
@@ -562,10 +581,10 @@ ApplicationWindow {
 
                     ComboBox {
                         id: lyricsBackendPicker
-                        model: root.bridge ? root.bridge.lyricsBackends : []
+                        model: root.bridge ? root.bridge.lyricsBackendLabels : []
                         currentIndex: 0
-                        Layout.preferredWidth: 170
-                        onActivated: if (root.bridge) root.bridge.setLyricsBackend(currentText)
+                        Layout.preferredWidth: 150
+                        onActivated: if (root.bridge) root.bridge.setLyricsBackend(root.selectedLyricsBackend())
                     }
 
                     Text {
@@ -573,7 +592,7 @@ ApplicationWindow {
                         color: root.gold
                         font.pixelSize: 12
                         elide: Text.ElideRight
-                        Layout.preferredWidth: 260
+                        Layout.preferredWidth: 330
                     }
 
                     Text {
@@ -645,7 +664,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: "使用提示：先“导入歌曲”或“生成样例”，再点“播放”。没有声音时点“刷新设备”，在输出设备里选择当前耳机/扬声器；“无声预览”只推进歌词和进度。"
+                    text: "使用提示：先“导入歌曲”或“生成样例”，再点“播放”。要自动歌词，请先选“占位提示”或安装 faster-whisper 后选“本地识别”，再点“生成歌词”。"
                     color: root.textMuted
                     font.pixelSize: 12
                     elide: Text.ElideRight

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import importlib.util
+import json
 import os
 import sys
 import traceback
@@ -34,6 +35,7 @@ from core_engine.player.sync_buffer import load_stem_pair
 from core_engine.transcription import (
     FasterWhisperConfig,
     FasterWhisperLyricsTranscriber,
+    LyricsTranscriptionRequest,
     PreviewLyricsTranscriber,
 )
 from harness.eval_harness.audio_latency_test import evaluate_latency
@@ -79,6 +81,7 @@ class WorkbenchBridge(QObject):
         self._instrumental_path = self._mock_dir / "instrumental.wav"
         self._output_path = self._mock_dir / "ui_export_mix.wav"
         self._lyrics_path = self._mock_dir / "lyrics.lrc"
+        self._current_source_path: Path | None = None
         self._master_plugin_paths: list[Path] = []
         self._status = "Ready"
         self._songs: list[SongAsset] = []
@@ -132,8 +135,16 @@ class WorkbenchBridge(QObject):
         return ["preview", "demucs"]
 
     @pyqtProperty("QStringList", constant=True)
+    def separatorBackendLabels(self) -> list[str]:
+        return [separator_backend_label(backend) for backend in self.separatorBackends]
+
+    @pyqtProperty("QStringList", constant=True)
     def lyricsBackends(self) -> list[str]:
         return ["preview", "faster-whisper", "none"]
+
+    @pyqtProperty("QStringList", constant=True)
+    def lyricsBackendLabels(self) -> list[str]:
+        return [lyrics_backend_label(backend) for backend in self.lyricsBackends]
 
     @pyqtProperty(str, notify=importOptionsChanged)
     def separatorBackend(self) -> str:
@@ -147,11 +158,11 @@ class WorkbenchBridge(QObject):
     def lyricsBackendStatus(self) -> str:
         if self._lyrics_backend == "faster-whisper":
             if is_module_available("faster_whisper"):
-                return "faster-whisper 已启用，导入时会尝试识别原始语言歌词"
-            return "faster-whisper 未安装，当前不会生效"
+                return "本地识别已可用：生成歌词时会尽量保留原始语言"
+            return "本地识别未安装：请先安装 faster-whisper，或切到“占位提示”"
         if self._lyrics_backend == "preview":
-            return "preview 只生成无歌词占位提示"
-        return "不生成歌词；纯音乐或暂无歌词时歌词区为空"
+            return "占位提示：不会识别内容，只提示用户导入歌词或安装识别依赖"
+        return "不生成歌词：适合纯音乐，歌词区会显示暂无歌词"
 
     @pyqtProperty(bool, notify=importBusyChanged)
     def importBusy(self) -> bool:
@@ -262,6 +273,7 @@ class WorkbenchBridge(QObject):
                 "[00:00.000]样例前奏\n[00:00.700]跑调预览\n[00:01.400]可以导出",
                 encoding="utf-8",
             )
+            self._current_source_path = self._vocal_path
             self.loadPlayback()
             self._set_status(f"样例音频已生成：{self._mock_dir}")
         except Exception:
@@ -361,7 +373,7 @@ class WorkbenchBridge(QObject):
     def selectAudioDevice(self, index: int) -> None:
         if index < 0 or index >= len(self._audio_devices):
             self._selected_audio_device_index = -1
-            self._set_status("Default audio device selected")
+            self._set_status("已切换为系统默认输出设备")
         else:
             self._selected_audio_device_index = index
             self._set_status(f"已选择输出设备：{self._audio_devices[index].label}")
@@ -436,10 +448,10 @@ class WorkbenchBridge(QObject):
         elif target == "output":
             self._output_path = path
         else:
-            self._set_status(f"Unknown path target: {target}")
+            self._set_status(f"不支持的文件类型：{target}")
             return
         self.pathsChanged.emit()
-        self._set_status(f"Selected {target}: {path}")
+        self._set_status(f"已选择{path_target_label(target)}：{path}")
 
     @pyqtSlot(str)
     def importSongFromUrl(self, url: str) -> None:
@@ -464,19 +476,26 @@ class WorkbenchBridge(QObject):
         self, url: str, separator_backend: str, lyrics_backend: str
     ) -> None:
         if self._import_busy:
-            self._set_status("Import already running")
+            self._set_status("歌曲正在导入中，请稍等")
             return
         if lyrics_backend == "faster-whisper" and not is_module_available("faster_whisper"):
             self._lyrics_backend = lyrics_backend
             self.importOptionsChanged.emit()
-            self._set_status("faster-whisper 未安装，无法识别歌词。请安装后重试，或切换到 preview/none。")
+            self._set_status(
+                "本地识别未安装，暂时不能生成歌词。请先安装 faster-whisper，"
+                "或把歌词后端切换为“占位提示/不生成歌词”。"
+            )
             return
         source_path = Path(QUrl(url).toLocalFile())
         self._separator_backend = separator_backend
         self._lyrics_backend = lyrics_backend
         self.importOptionsChanged.emit()
         self._set_import_busy(True)
-        self._set_status(f"正在导入歌曲... 分离={separator_backend}，歌词={lyrics_backend}")
+        self._set_status(
+            "正在导入歌曲... "
+            f"分离={separator_backend_label(separator_backend)}，"
+            f"歌词={lyrics_backend_label(lyrics_backend)}"
+        )
 
         self._import_thread = QThread(self)
         self._import_worker = ImportSongWorker(
@@ -499,15 +518,55 @@ class WorkbenchBridge(QObject):
     def setSeparatorBackend(self, backend: str) -> None:
         self._separator_backend = backend
         self.importOptionsChanged.emit()
+        self._set_status(f"已选择分离方式：{separator_backend_label(backend)}")
 
     @pyqtSlot(str)
     def setLyricsBackend(self, backend: str) -> None:
         self._lyrics_backend = backend
         self.importOptionsChanged.emit()
         if backend == "faster-whisper" and not is_module_available("faster_whisper"):
-            self._set_status("faster-whisper 未安装，选择后不会生效；请安装依赖或切换歌词后端。")
+            self._set_status("本地识别未安装，选择后不会生效；请安装 faster-whisper 或切换歌词后端。")
         else:
-            self._set_status(f"已选择歌词后端：{backend}")
+            self._set_status(f"已选择歌词方式：{lyrics_backend_label(backend)}")
+
+    @pyqtSlot()
+    def generateLyrics(self) -> None:
+        if self._lyrics_backend == "none":
+            self._set_status("当前歌词方式是“不生成歌词”。请先切换为“占位提示”或“本地识别”。")
+            return
+        if self._lyrics_backend == "faster-whisper" and not is_module_available("faster_whisper"):
+            self._set_status(
+                "生成歌词前需要先安装 faster-whisper。本机未检测到依赖；"
+                "也可以先选择“占位提示”，或导入同名 .lrc/.srt 歌词文件。"
+            )
+            return
+
+        audio_path = self._lyrics_source_audio_path()
+        if audio_path is None or not audio_path.exists():
+            self._set_status("请先导入或加载一首歌曲，再生成歌词。")
+            return
+
+        output_path = self._lyrics_output_path()
+        try:
+            self._set_status(f"正在生成歌词：{lyrics_backend_label(self._lyrics_backend)}")
+            transcriber = self._build_lyrics_transcriber(self._lyrics_backend)
+            if transcriber is None:
+                self._set_status("当前设置为不生成歌词，请先切换歌词方式。")
+                return
+            self._lyrics_path = transcriber.transcribe(
+                LyricsTranscriptionRequest(audio_path=audio_path, output_path=output_path)
+            )
+            timeline = load_lyrics_timeline(self._lyrics_path)
+            self._lyrics_sync = LyricPlaybackSynchronizer(timeline)
+            self._lyric_lines = timeline.texts()
+            self._update_lyrics()
+            self.pathsChanged.emit()
+            self.lyricsChanged.emit()
+            self._set_status(
+                f"歌词已生成：{self._lyrics_path}。{lyrics_backend_status_text(self._lyrics_backend)}"
+            )
+        except Exception:
+            self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
 
     @pyqtSlot(str)
     def setSongsRootFromUrl(self, url: str) -> None:
@@ -542,6 +601,7 @@ class WorkbenchBridge(QObject):
                 return
             session = load_song_session(selected)
             self._current_song_key = song_key(selected)
+            self._current_source_path = self._project_source_path(selected.root) or selected.vocal_path
             self._vocal_path = session.asset.vocal_path
             self._instrumental_path = session.asset.instrumental_path
             if session.asset.lyrics_path is not None:
@@ -589,6 +649,7 @@ class WorkbenchBridge(QObject):
         self.stop()
         self._songs = []
         self._current_song_key = None
+        self._current_source_path = None
         self._playback = None
         self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]))
         self._lyric_lines = []
@@ -627,8 +688,8 @@ class WorkbenchBridge(QObject):
                 )
             )
             self._set_status(
-                f"Exported {result.output_path} "
-                f"({result.duration_seconds:.2f}s / {result.sample_rate} Hz)"
+                f"已导出：{result.output_path} "
+                f"（{result.duration_seconds:.2f} 秒 / {result.sample_rate} Hz）"
             )
         except Exception:
             self._set_status(traceback.format_exc(limit=1).strip())
@@ -644,10 +705,10 @@ class WorkbenchBridge(QObject):
                 max_lag_ms=100.0,
                 tolerance_ms=5.0,
             )
-            status = "passed" if result.passed else "check"
+            status = "通过" if result.passed else "需检查"
             self._set_status(
-                f"Alignment {status}: latency={result.latency_seconds * 1000.0:.2f}ms "
-                f"score={result.score:.3f}"
+                f"对齐检测{status}：延迟={result.latency_seconds * 1000.0:.2f}ms，"
+                f"得分={result.score:.3f}"
             )
         except Exception:
             self._set_status(traceback.format_exc(limit=1).strip())
@@ -696,6 +757,7 @@ class WorkbenchBridge(QObject):
     def _apply_imported_project(self, project, separator_backend: str, lyrics_backend: str) -> None:
         self._vocal_path = project.stems.vocal_path
         self._instrumental_path = project.stems.instrumental_path
+        self._current_source_path = project.source_path
         if project.lyrics_path is not None:
             self._lyrics_path = project.lyrics_path
         else:
@@ -707,9 +769,40 @@ class WorkbenchBridge(QObject):
         self.loadPlayback()
         self._upsert_song(project.asset)
         self._set_status(
-            f"导入成功：{project.name}（分离={separator_backend}，歌词={lyrics_backend}）。"
+            f"导入成功：{project.name}"
+            f"（分离={separator_backend_label(separator_backend)}，"
+            f"歌词={lyrics_backend_label(lyrics_backend)}）。"
             f"{lyrics_backend_status_text(lyrics_backend)}已加入左侧歌曲库。"
         )
+
+    def _lyrics_source_audio_path(self) -> Path | None:
+        if self._current_source_path is not None and self._current_source_path.exists():
+            return self._current_source_path
+        if self._vocal_path.exists():
+            return self._vocal_path
+        if self._instrumental_path.exists():
+            return self._instrumental_path
+        return None
+
+    def _lyrics_output_path(self) -> Path:
+        if self._current_source_path is not None:
+            return self._current_source_path.parent / "lyrics.lrc"
+        if self._lyrics_path:
+            return self._lyrics_path.with_suffix(".lrc")
+        return self._mock_dir / "lyrics.lrc"
+
+    def _project_source_path(self, project_dir: Path) -> Path | None:
+        manifest_path = project_dir / "project.json"
+        if not manifest_path.exists():
+            return None
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        value = manifest.get("project_source") or manifest.get("original_source")
+        if not value:
+            return None
+        return Path(value)
 
     @pyqtSlot(object, str, str)
     def _handle_import_finished(self, project, separator_backend: str, lyrics_backend: str) -> None:
@@ -809,9 +902,36 @@ def is_module_available(module_name: str) -> bool:
     return importlib.util.find_spec(module_name) is not None
 
 
+def separator_backend_label(backend: str) -> str:
+    labels = {
+        "preview": "快速预览",
+        "demucs": "Demucs 人声分离",
+    }
+    return labels.get(backend, backend)
+
+
+def lyrics_backend_label(backend: str) -> str:
+    labels = {
+        "preview": "占位提示",
+        "faster-whisper": "本地识别",
+        "none": "不生成歌词",
+    }
+    return labels.get(backend, backend)
+
+
+def path_target_label(target: str) -> str:
+    labels = {
+        "vocal": "人声文件",
+        "instrumental": "伴奏文件",
+        "lyrics": "歌词文件",
+        "output": "导出位置",
+    }
+    return labels.get(target, target)
+
+
 def lyrics_backend_status_text(backend: str) -> str:
     if backend == "faster-whisper":
-        return "faster-whisper 已执行。"
+        return "本地识别已执行；如果歌曲是英文，歌词会尽量保持英文。"
     if backend == "preview":
         return "未找到真实歌词时会显示占位提示。"
     return "未生成歌词，纯音乐或暂无歌词时歌词区为空。"
@@ -819,7 +939,7 @@ def lyrics_backend_status_text(backend: str) -> str:
 
 def format_user_error(message: str) -> str:
     if "faster-whisper" in message or "faster_whisper" in message:
-        return "歌词识别失败：faster-whisper 未安装或不可用。请安装依赖后重试，或切换到 preview/none。"
+        return "歌词识别失败：本地识别依赖未安装或不可用。请安装 faster-whisper 后重试，或切换到“占位提示/不生成歌词”。"
     if "Format not recognised" in message or "Format not recognized" in message:
         return "导入失败：当前音频格式不能直接读取。请确认 ffmpeg 已放在 plugins/models/ffmpeg，或先转换为 wav。"
     if "ffmpeg" in message and "not found" in message:

@@ -1,4 +1,10 @@
-from ui.main_window import WorkbenchBridge, format_user_error, resolve_demucs_python
+from ui.main_window import (
+    WorkbenchBridge,
+    format_user_error,
+    lyrics_backend_label,
+    resolve_demucs_python,
+    separator_backend_label,
+)
 from core_engine.player.sounddevice_output import AudioOutputDevice
 
 
@@ -11,7 +17,7 @@ def test_workbench_bridge_generates_and_exports_mock_audio(tmp_path):
     assert (tmp_path / "harness" / "mock_data" / "vocal.wav").exists()
     assert (tmp_path / "harness" / "mock_data" / "instrumental.wav").exists()
     assert (tmp_path / "harness" / "mock_data" / "ui_export_mix.wav").exists()
-    assert "Exported" in bridge.status
+    assert "已导出" in bridge.status
 
 
 def test_workbench_bridge_playback_and_lyrics_state(tmp_path):
@@ -77,7 +83,7 @@ def test_workbench_bridge_accepts_file_urls(tmp_path):
     bridge.setPathFromUrl("vocal", selected.as_uri())
 
     assert bridge.vocalPath == str(selected)
-    assert "Selected vocal" in bridge.status
+    assert "已选择人声文件" in bridge.status
 
 
 def test_workbench_bridge_scans_and_loads_song_folder(tmp_path):
@@ -190,7 +196,7 @@ def test_workbench_bridge_blocks_missing_faster_whisper(tmp_path, monkeypatch):
     bridge.importSongWithBackendsAsync(song.as_uri(), "preview", "faster-whisper")
 
     assert not bridge.importBusy
-    assert "faster-whisper 未安装" in bridge.status
+    assert "本地识别未安装" in bridge.status
 
 
 def test_format_user_error_translates_missing_faster_whisper():
@@ -235,8 +241,8 @@ def test_workbench_bridge_evaluates_alignment(tmp_path):
     bridge.generateMockAudio()
     bridge.evaluateAlignment()
 
-    assert "Alignment" in bridge.status
-    assert "latency=" in bridge.status
+    assert "对齐检测" in bridge.status
+    assert "延迟=" in bridge.status
 
 
 def test_workbench_bridge_imports_complete_song(tmp_path):
@@ -252,7 +258,7 @@ def test_workbench_bridge_imports_complete_song(tmp_path):
     assert bridge.instrumentalPath.endswith("instrumental.wav")
     assert bridge.songNames[0].startswith("complete_song")
     assert "导入成功" in bridge.status
-    assert "分离=preview" in bridge.status
+    assert "分离=快速预览" in bridge.status
 
 
 def test_workbench_bridge_imports_with_selected_backends(tmp_path):
@@ -266,7 +272,7 @@ def test_workbench_bridge_imports_with_selected_backends(tmp_path):
     assert bridge.separatorBackend == "preview"
     assert bridge.lyricsBackend == "none"
     assert bridge.vocalPath.endswith("vocal.wav")
-    assert "分离=preview" in bridge.status
+    assert "分离=快速预览" in bridge.status
 
 
 def test_workbench_bridge_standardizes_compressed_import_when_ffmpeg_exists(tmp_path, monkeypatch):
@@ -305,7 +311,43 @@ def test_workbench_bridge_reports_busy_import_guard(tmp_path):
     bridge.importSongWithBackendsAsync((tmp_path / "song.wav").as_uri(), "preview", "none")
 
     assert bridge.importBusy is True
-    assert bridge.status == "Import already running"
+    assert bridge.status == "歌曲正在导入中，请稍等"
+
+
+def test_backend_labels_are_chinese_for_ui():
+    assert separator_backend_label("preview") == "快速预览"
+    assert separator_backend_label("demucs") == "Demucs 人声分离"
+    assert lyrics_backend_label("preview") == "占位提示"
+    assert lyrics_backend_label("faster-whisper") == "本地识别"
+    assert lyrics_backend_label("none") == "不生成歌词"
+
+
+def test_workbench_bridge_generates_preview_lyrics_for_loaded_audio(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+
+    bridge.generateLyrics()
+
+    assert bridge.lyricsPath.endswith("lyrics.lrc")
+    assert bridge.lyricLines[0] == "未找到歌词文件"
+    assert "歌词已生成" in bridge.status
+
+
+def test_workbench_bridge_generate_lyrics_warns_for_missing_song(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+
+    bridge.generateLyrics()
+
+    assert "请先导入或加载一首歌曲" in bridge.status
+
+
+def test_workbench_bridge_generate_lyrics_warns_when_backend_is_none(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.setLyricsBackend("none")
+
+    bridge.generateLyrics()
+
+    assert "不生成歌词" in bridge.status
 
 
 def test_resolve_demucs_python_prefers_configured_env(tmp_path, monkeypatch):
