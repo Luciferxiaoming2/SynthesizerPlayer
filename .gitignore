@@ -1,0 +1,90 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*$py.class
+
+.venv/
+venv/
+env/
+.cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+.env
+.env.*
+!.env.example
+
+# Build and packaging outputs
+build/
+dist/
+site/
+*.egg-info/
+*.egg
+
+# IDE/editor and OS local files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+logs/
+
+# Legacy source references kept out of the migrated app repository
+源代码/
+婧愪唬鐮?/
+
+# Agent and harness specification files
+.agent/
+HARNESS.md
+docs/harness/
+docs/adr/ADR-0001-harness-first-architecture.md
+docs/runbooks/local_agent_checks.md
+docs/specs/harness_engine.md
+
+# Local audio assets and rendered harness outputs
+harness/mock_data/*
+!harness/mock_data/.gitkeep
+projects/
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.mid
+*.midi
+*.aac
+*.m4a
+*.aiff
+*.aif
+*.npy
+*.npz
+
+# Heavy local plugins and model weights
+plugins/models/*
+plugins/vst3/*
+!plugins/models/.gitkeep
+!plugins/vst3/.gitkeep
+
+# Common AI model/checkpoint formats
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.safetensors
+*.index

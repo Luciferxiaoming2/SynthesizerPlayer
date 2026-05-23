@@ -1,0 +1,60 @@
+[project]
+name = "audio-forge"
+version = "0.1.0"
+description = "UI-decoupled AI audio workstation engine, harnesses, and QML shell."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "sounddevice>=0.4.6",
+    "soundfile>=0.12.1",
+    "librosa>=0.10.2",
+    "pysubs2>=1.6.1",
+    "pedalboard>=0.9.16",
+    "PyQt6>=6.7",
+]
+
+[project.optional-dependencies]
+dsp = [
+    "pyworld>=0.3.4",
+]
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.5",
+]
+package = [
+    "pyinstaller>=6.10",
+]
+asr = [
+    "faster-whisper>=1.1",
+]
+
+[project.scripts]
+audio-forge-ui = "ui.main_window:main"
+audio-forge-tone-deaf = "harness.cli_harness.run_pitch_shift:main"
+audio-forge-analyze-f0-drift = "harness.cli_harness.analyze_f0_drift:main"
+audio-forge-lyric-ai = "harness.cli_harness.run_lyric_ai:main"
+audio-forge-generate-mock-audio = "harness.cli_harness.generate_mock_audio:main"
+audio-forge-dual-mix = "harness.cli_harness.run_dual_mix:main"
+audio-forge-playback = "harness.cli_harness.run_playback:main"
+audio-forge-tone-deaf-mix = "harness.cli_harness.render_tone_deaf_mix:main"
+audio-forge-render-effects = "harness.cli_harness.render_effect_chain:main"
+audio-forge-export-mix = "harness.cli_harness.export_mix:main"
+audio-forge-scan-songs = "harness.cli_harness.scan_songs:main"
+audio-forge-lyrics-at = "harness.cli_harness.lyrics_at:main"
+audio-forge-load-song-session = "harness.cli_harness.load_song_session:main"
+audio-forge-import-song = "harness.cli_harness.import_song:main"
+audio-forge-inspect-audio-tools = "harness.cli_harness.inspect_audio_tools:main"
+audio-forge-agent-checks = "scripts.run_agent_checks:main"
+audio-forge-validate-architecture = "scripts.validate_architecture:main"
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["core_engine*", "harness*", "ui*", "scripts*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
