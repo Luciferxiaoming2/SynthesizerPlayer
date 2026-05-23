@@ -16,6 +16,11 @@ class SongAsset:
     vocal_path: Path
     instrumental_path: Path
     lyrics_path: Path | None = None
+    source_path: Path | None = None
+
+    @property
+    def is_imported_project(self) -> bool:
+        return self.source_path is None
 
 
 def find_matching_file(folder: Path, markers: tuple[str, ...]) -> Path | None:
@@ -41,6 +46,20 @@ def scan_song_library(root: Path) -> list[SongAsset]:
         return []
 
     songs: list[SongAsset] = []
+    for path in sorted(item for item in root.iterdir() if item.is_file()):
+        if path.suffix.lower() not in AUDIO_SUFFIXES:
+            continue
+        songs.append(
+            SongAsset(
+                name=path.stem,
+                root=root,
+                vocal_path=path,
+                instrumental_path=path,
+                lyrics_path=find_sidecar_lyrics(path),
+                source_path=path,
+            )
+        )
+
     for folder in sorted(path for path in root.iterdir() if path.is_dir()):
         vocal = find_matching_file(folder, VOCAL_MARKERS)
         instrumental = find_matching_file(folder, INSTRUMENTAL_MARKERS)
@@ -58,3 +77,10 @@ def scan_song_library(root: Path) -> list[SongAsset]:
         )
     return songs
 
+
+def find_sidecar_lyrics(audio_path: Path) -> Path | None:
+    for suffix in LYRIC_SUFFIXES:
+        candidate = audio_path.with_suffix(suffix)
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None

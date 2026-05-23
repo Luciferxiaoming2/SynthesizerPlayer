@@ -499,7 +499,7 @@ class WorkbenchBridge(QObject):
         try:
             self._songs = scan_song_library(self._songs_root)
             self.songsChanged.emit()
-            self._set_status(f"Scanned {len(self._songs)} songs: {self._songs_root}")
+            self._set_status(f"已扫描到 {len(self._songs)} 首歌曲：{self._songs_root}")
         except Exception:
             self._songs = []
             self.songsChanged.emit()
@@ -509,9 +509,17 @@ class WorkbenchBridge(QObject):
     def loadSongAt(self, index: int) -> None:
         try:
             if index < 0 or index >= len(self._songs):
-                self._set_status("No song selected")
+                self._set_status("请先在左侧选择歌曲")
                 return
-            session = load_song_session(self._songs[index])
+            selected = self._songs[index]
+            if selected.source_path is not None:
+                self.importSongWithBackendsAsync(
+                    QUrl.fromLocalFile(str(selected.source_path)).toString(),
+                    self._separator_backend,
+                    self._lyrics_backend,
+                )
+                return
+            session = load_song_session(selected)
             self._vocal_path = session.asset.vocal_path
             self._instrumental_path = session.asset.instrumental_path
             if session.asset.lyrics_path is not None:
@@ -522,7 +530,7 @@ class WorkbenchBridge(QObject):
             self._lyric_lines = timeline.texts()
             self.pathsChanged.emit()
             self.lyricsChanged.emit()
-            self._set_status(f"Loaded song: {session.asset.name}")
+            self._set_status(f"已加载歌曲：{session.asset.name}")
             self.loadPlayback()
         except Exception:
             self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
@@ -631,9 +639,10 @@ class WorkbenchBridge(QObject):
         self._output_path = project.project_dir / f"{project.name}_export.wav"
         self.pathsChanged.emit()
         self.loadPlayback()
+        self._upsert_song(project.asset)
         self._set_status(
-            f"Imported song project: {project.project_dir} "
-            f"(separator={separator_backend}, lyrics={lyrics_backend})"
+            f"导入成功：{project.name}（分离={separator_backend}，歌词={lyrics_backend}）。"
+            "已加入左侧歌曲库。"
         )
 
     @pyqtSlot(object, str, str)
@@ -658,6 +667,14 @@ class WorkbenchBridge(QObject):
             return
         self._import_busy = value
         self.importBusyChanged.emit()
+
+    def _upsert_song(self, asset: SongAsset) -> None:
+        self._songs = [
+            song for song in self._songs
+            if song.root != asset.root and song.source_path != asset.source_path
+        ]
+        self._songs.insert(0, asset)
+        self.songsChanged.emit()
 
     def _build_separator(self, backend: str):
         if backend == "demucs":

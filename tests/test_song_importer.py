@@ -71,7 +71,7 @@ def test_import_single_song_can_generate_preview_lyrics(tmp_path):
 
     assert project.lyrics_path is not None
     assert project.lyrics_path.name == "lyrics.lrc"
-    assert "Lyrics transcription pending" in project.lyrics_path.read_text(encoding="utf-8")
+    assert "暂无真实歌词" in project.lyrics_path.read_text(encoding="utf-8")
 
 
 def test_import_single_song_can_standardize_audio_before_separation(tmp_path):

@@ -106,6 +106,19 @@ def test_workbench_bridge_scans_and_loads_song_folder(tmp_path):
     assert "音频已加载" in bridge.status
 
 
+def test_workbench_bridge_scans_plain_music_folder(tmp_path):
+    music = tmp_path / "music"
+    music.mkdir()
+    (music / "Song A.mp3").write_bytes(b"fake")
+    (music / "Song B.m4a").write_bytes(b"fake")
+
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.setSongsRootFromUrl(music.as_uri())
+
+    assert bridge.songNames == ["Song A", "Song B"]
+    assert "已扫描到 2 首歌曲" in bridge.status
+
+
 def test_workbench_bridge_selects_audio_device_without_opening_it(tmp_path):
     bridge = WorkbenchBridge(tmp_path)
     bridge._audio_devices = [
@@ -159,8 +172,9 @@ def test_workbench_bridge_imports_complete_song(tmp_path):
     assert "projects" in bridge.vocalPath
     assert bridge.vocalPath.endswith("vocal.wav")
     assert bridge.instrumentalPath.endswith("instrumental.wav")
-    assert "Imported song project" in bridge.status
-    assert "separator=preview" in bridge.status
+    assert bridge.songNames[0].startswith("complete_song")
+    assert "导入成功" in bridge.status
+    assert "分离=preview" in bridge.status
 
 
 def test_workbench_bridge_imports_with_selected_backends(tmp_path):
@@ -174,7 +188,7 @@ def test_workbench_bridge_imports_with_selected_backends(tmp_path):
     assert bridge.separatorBackend == "preview"
     assert bridge.lyricsBackend == "none"
     assert bridge.vocalPath.endswith("vocal.wav")
-    assert "separator=preview" in bridge.status
+    assert "分离=preview" in bridge.status
 
 
 def test_workbench_bridge_standardizes_compressed_import_when_ffmpeg_exists(tmp_path, monkeypatch):

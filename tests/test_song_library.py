@@ -16,6 +16,22 @@ def test_scan_song_library_finds_dual_track_folder(tmp_path: Path):
     assert len(songs) == 1
     assert songs[0].name == "Song A"
     assert songs[0].lyrics_path == song_dir / "lyrics.lrc"
+    assert songs[0].is_imported_project
+
+
+def test_scan_song_library_lists_plain_audio_files(tmp_path: Path):
+    audio = tmp_path / "普通歌曲.m4a"
+    lyric = tmp_path / "普通歌曲.lrc"
+    audio.write_bytes(b"")
+    lyric.write_text("[00:00.00]hi", encoding="utf-8")
+
+    songs = scan_song_library(tmp_path)
+
+    assert len(songs) == 1
+    assert songs[0].name == "普通歌曲"
+    assert songs[0].source_path == audio
+    assert songs[0].lyrics_path == lyric
+    assert not songs[0].is_imported_project
 
 
 def test_offset_store_round_trips_values(tmp_path: Path):
@@ -27,4 +43,3 @@ def test_offset_store_round_trips_values(tmp_path: Path):
 
     assert loaded.get("Song A") == 2239
     assert loaded.get("missing") == 0
-
