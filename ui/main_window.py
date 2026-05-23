@@ -77,6 +77,7 @@ class WorkbenchBridge(QObject):
         self._instrumental_path = self._mock_dir / "instrumental.wav"
         self._output_path = self._mock_dir / "ui_export_mix.wav"
         self._lyrics_path = self._mock_dir / "lyrics.lrc"
+        self._master_plugin_paths: list[Path] = []
         self._status = "Ready"
         self._songs: list[SongAsset] = []
         self._audio_devices: list[AudioOutputDevice] = []
@@ -177,6 +178,12 @@ class WorkbenchBridge(QObject):
         self._lyrics_path = Path(value)
         self.pathsChanged.emit()
 
+    @pyqtProperty(str, notify=pathsChanged)
+    def masterPluginPath(self) -> str:
+        if not self._master_plugin_paths:
+            return ""
+        return str(self._master_plugin_paths[-1])
+
     @pyqtProperty(float, notify=playbackChanged)
     def playbackProgress(self) -> float:
         if self._playback is None:
@@ -200,6 +207,18 @@ class WorkbenchBridge(QObject):
     @pyqtProperty(bool, notify=playbackChanged)
     def audioOutputActive(self) -> bool:
         return self._audio_output_active
+
+    @pyqtProperty(bool, notify=playbackChanged)
+    def vocalMuted(self) -> bool:
+        if self._playback is None:
+            return False
+        return self._playback.controls.vocal_muted
+
+    @pyqtProperty(bool, notify=playbackChanged)
+    def instrumentalMuted(self) -> bool:
+        if self._playback is None:
+            return False
+        return self._playback.controls.instrumental_muted
 
     @pyqtProperty(str, notify=lyricsChanged)
     def currentLyric(self) -> str:
@@ -342,6 +361,44 @@ class WorkbenchBridge(QObject):
         self._playback.set_gains(vocal_gain=vocal_gain, instrumental_gain=instrumental_gain)
         self.playbackChanged.emit()
 
+    @pyqtSlot(str)
+    def setMasterPluginFromUrl(self, url: str) -> None:
+        path = Path(QUrl(url).toLocalFile())
+        if not path.exists():
+            self._set_status(f"VST 文件不存在：{path}")
+            return
+        self._master_plugin_paths = [path]
+        self.pathsChanged.emit()
+        self._set_status(f"已加载主输出 VST：{path.name}。下次导出时生效。")
+
+    @pyqtSlot()
+    def clearMasterPlugin(self) -> None:
+        self._master_plugin_paths = []
+        self.pathsChanged.emit()
+        self._set_status("已移除主输出 VST")
+
+    @pyqtSlot()
+    def toggleVocalMute(self) -> None:
+        if self._playback is None:
+            self.loadPlayback()
+        if self._playback is None:
+            return
+        muted = not self._playback.controls.vocal_muted
+        self._playback.set_mute(vocal_muted=muted)
+        self._set_status("人声已静音" if muted else "人声已恢复")
+        self.playbackChanged.emit()
+
+    @pyqtSlot()
+    def toggleInstrumentalMute(self) -> None:
+        if self._playback is None:
+            self.loadPlayback()
+        if self._playback is None:
+            return
+        muted = not self._playback.controls.instrumental_muted
+        self._playback.set_mute(instrumental_muted=muted)
+        self._set_status("伴奏已静音" if muted else "伴奏已恢复")
+        self.playbackChanged.emit()
+
     @pyqtSlot(str, str)
     def setPathFromUrl(self, target: str, url: str) -> None:
         path = Path(QUrl(url).toLocalFile())
@@ -478,6 +535,7 @@ class WorkbenchBridge(QObject):
                     output_path=self._output_path,
                     tone_deaf_ratio=tone_deaf_ratio,
                     master_gain_db=master_gain_db,
+                    master_plugins=list(self._master_plugin_paths),
                 )
             )
             self._set_status(

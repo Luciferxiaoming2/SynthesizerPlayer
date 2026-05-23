@@ -35,6 +35,39 @@ def test_workbench_bridge_playback_and_lyrics_state(tmp_path):
     assert bridge.playbackProgress == 0.0
 
 
+def test_workbench_bridge_toggles_track_mutes(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+
+    bridge.toggleVocalMute()
+    assert bridge.vocalMuted is True
+    assert "人声已静音" in bridge.status
+
+    bridge.toggleInstrumentalMute()
+    assert bridge.instrumentalMuted is True
+    assert "伴奏已静音" in bridge.status
+
+    bridge.toggleVocalMute()
+    bridge.toggleInstrumentalMute()
+    assert bridge.vocalMuted is False
+    assert bridge.instrumentalMuted is False
+
+
+def test_workbench_bridge_sets_and_clears_master_vst_plugin(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    plugin = tmp_path / "example.vst3"
+    plugin.write_text("fake plugin", encoding="utf-8")
+
+    bridge.setMasterPluginFromUrl(plugin.as_uri())
+
+    assert bridge.masterPluginPath == str(plugin)
+    assert "已加载主输出 VST" in bridge.status
+
+    bridge.clearMasterPlugin()
+    assert bridge.masterPluginPath == ""
+    assert "已移除主输出 VST" in bridge.status
+
+
 def test_workbench_bridge_accepts_file_urls(tmp_path):
     bridge = WorkbenchBridge(tmp_path)
     selected = tmp_path / "selected.wav"

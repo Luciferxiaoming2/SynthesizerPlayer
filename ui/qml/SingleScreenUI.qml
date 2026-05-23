@@ -54,6 +54,13 @@ ApplicationWindow {
         onAccepted: if (root.bridge) root.bridge.setSongsRootFromUrl(selectedFolder.toString())
     }
 
+    FileDialog {
+        id: vstPluginDialog
+        title: "选择主输出 VST 插件"
+        nameFilters: ["VST 插件 (*.vst3 *.dll)", "所有文件 (*)"]
+        onAccepted: if (root.bridge) root.bridge.setMasterPluginFromUrl(selectedFile.toString())
+    }
+
     Rectangle {
         anchors.fill: parent
         color: root.bg
@@ -285,7 +292,7 @@ ApplicationWindow {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: 280
+            height: 318
             color: "#171020"
 
             ColumnLayout {
@@ -344,17 +351,19 @@ ApplicationWindow {
                     }
 
                     Button {
-                        text: "人声静音"
-                        enabled: false
+                        text: root.bridge && root.bridge.vocalMuted ? "恢复人声" : "人声静音"
+                        enabled: !(root.bridge && root.bridge.importBusy)
                         Layout.preferredWidth: 118
                         Layout.preferredHeight: 44
+                        onClicked: if (root.bridge) root.bridge.toggleVocalMute()
                     }
 
                     Button {
-                        text: "伴奏静音"
-                        enabled: false
+                        text: root.bridge && root.bridge.instrumentalMuted ? "恢复伴奏" : "伴奏静音"
+                        enabled: !(root.bridge && root.bridge.importBusy)
                         Layout.preferredWidth: 118
                         Layout.preferredHeight: 44
+                        onClicked: if (root.bridge) root.bridge.toggleInstrumentalMute()
                     }
 
                     Button {
@@ -513,6 +522,39 @@ ApplicationWindow {
                         text: "选择导出"
                         Layout.preferredWidth: 100
                         onClicked: outputDialog.open()
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    Text {
+                        text: "主输出 VST"
+                        color: root.textMuted
+                        font.pixelSize: 13
+                    }
+
+                    Text {
+                        text: root.bridge && root.bridge.masterPluginPath ? root.bridge.masterPluginPath : "未加载；加载后仅在“导出”时生效"
+                        color: root.textMain
+                        font.pixelSize: 13
+                        elide: Text.ElideMiddle
+                        Layout.fillWidth: true
+                    }
+
+                    Button {
+                        text: "加载 VST"
+                        enabled: !(root.bridge && root.bridge.importBusy)
+                        Layout.preferredWidth: 100
+                        onClicked: vstPluginDialog.open()
+                    }
+
+                    Button {
+                        text: "移除"
+                        enabled: root.bridge && root.bridge.masterPluginPath && !(root.bridge && root.bridge.importBusy)
+                        Layout.preferredWidth: 72
+                        onClicked: if (root.bridge) root.bridge.clearMasterPlugin()
                     }
                 }
 
