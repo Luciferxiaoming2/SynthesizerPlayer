@@ -139,6 +139,64 @@ def test_workbench_bridge_scans_plain_music_folder(tmp_path):
     assert "已扫描到 2 首歌曲" in bridge.status
 
 
+def test_workbench_bridge_delete_current_song_loads_next(tmp_path):
+    songs_root = tmp_path / "songs"
+    song_a = songs_root / "Song A"
+    song_b = songs_root / "Song B"
+    song_a.mkdir(parents=True)
+    song_b.mkdir()
+
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+    source_vocal = tmp_path / "harness" / "mock_data" / "vocal.wav"
+    source_inst = tmp_path / "harness" / "mock_data" / "instrumental.wav"
+    for folder in (song_a, song_b):
+        (folder / "vocal.wav").write_bytes(source_vocal.read_bytes())
+        (folder / "instrumental.wav").write_bytes(source_inst.read_bytes())
+        (folder / "lyrics.lrc").write_text("[00:00.000]line", encoding="utf-8")
+
+    bridge.setSongsRootFromUrl(songs_root.as_uri())
+    bridge.loadSongAt(0)
+    bridge.play()
+
+    bridge.deleteSongAt(0)
+
+    assert bridge.songNames == ["Song B"]
+    assert "Song B" in bridge.status or "音频已加载" in bridge.status
+    assert bridge.vocalPath == str(song_b / "vocal.wav")
+
+
+def test_workbench_bridge_clear_song_list_keeps_files(tmp_path):
+    songs_root = tmp_path / "music"
+    songs_root.mkdir()
+    audio = songs_root / "Song A.mp3"
+    audio.write_bytes(b"fake")
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.setSongsRootFromUrl(songs_root.as_uri())
+
+    bridge.clearSongList()
+
+    assert bridge.songNames == []
+    assert audio.exists()
+    assert "不会删除磁盘文件" in bridge.status
+
+
+def test_workbench_bridge_blocks_missing_faster_whisper(tmp_path, monkeypatch):
+    bridge = WorkbenchBridge(tmp_path)
+    song = tmp_path / "song.wav"
+    song.write_bytes(b"fake")
+    monkeypatch.setattr("ui.main_window.is_module_available", lambda _name: False)
+
+    bridge.importSongWithBackendsAsync(song.as_uri(), "preview", "faster-whisper")
+
+    assert not bridge.importBusy
+    assert "faster-whisper 未安装" in bridge.status
+
+
+def test_format_user_error_translates_missing_faster_whisper():
+    assert "歌词识别失败" in format_user_error("No module named 'faster_whisper'")
+
+
 def test_workbench_bridge_selects_audio_device_without_opening_it(tmp_path):
     bridge = WorkbenchBridge(tmp_path)
     bridge._audio_devices = [

@@ -1,6 +1,7 @@
 """PyQt6/QML application shell for the Audio Forge MVP."""
 
 from pathlib import Path
+import importlib.util
 import os
 import sys
 import traceback
@@ -81,6 +82,7 @@ class WorkbenchBridge(QObject):
         self._master_plugin_paths: list[Path] = []
         self._status = "Ready"
         self._songs: list[SongAsset] = []
+        self._current_song_key: tuple[str, str | None] | None = None
         self._audio_devices: list[AudioOutputDevice] = []
         self._selected_audio_device_index = -1
         self._separator_backend = "preview"
@@ -140,6 +142,16 @@ class WorkbenchBridge(QObject):
     @pyqtProperty(str, notify=importOptionsChanged)
     def lyricsBackend(self) -> str:
         return self._lyrics_backend
+
+    @pyqtProperty(str, notify=importOptionsChanged)
+    def lyricsBackendStatus(self) -> str:
+        if self._lyrics_backend == "faster-whisper":
+            if is_module_available("faster_whisper"):
+                return "faster-whisper 已启用，导入时会尝试识别原始语言歌词"
+            return "faster-whisper 未安装，当前不会生效"
+        if self._lyrics_backend == "preview":
+            return "preview 只生成无歌词占位提示"
+        return "不生成歌词；纯音乐或暂无歌词时歌词区为空"
 
     @pyqtProperty(bool, notify=importBusyChanged)
     def importBusy(self) -> bool:
@@ -454,6 +466,11 @@ class WorkbenchBridge(QObject):
         if self._import_busy:
             self._set_status("Import already running")
             return
+        if lyrics_backend == "faster-whisper" and not is_module_available("faster_whisper"):
+            self._lyrics_backend = lyrics_backend
+            self.importOptionsChanged.emit()
+            self._set_status("faster-whisper 未安装，无法识别歌词。请安装后重试，或切换到 preview/none。")
+            return
         source_path = Path(QUrl(url).toLocalFile())
         self._separator_backend = separator_backend
         self._lyrics_backend = lyrics_backend
@@ -487,6 +504,10 @@ class WorkbenchBridge(QObject):
     def setLyricsBackend(self, backend: str) -> None:
         self._lyrics_backend = backend
         self.importOptionsChanged.emit()
+        if backend == "faster-whisper" and not is_module_available("faster_whisper"):
+            self._set_status("faster-whisper 未安装，选择后不会生效；请安装依赖或切换歌词后端。")
+        else:
+            self._set_status(f"已选择歌词后端：{backend}")
 
     @pyqtSlot(str)
     def setSongsRootFromUrl(self, url: str) -> None:
@@ -520,6 +541,7 @@ class WorkbenchBridge(QObject):
                 )
                 return
             session = load_song_session(selected)
+            self._current_song_key = song_key(selected)
             self._vocal_path = session.asset.vocal_path
             self._instrumental_path = session.asset.instrumental_path
             if session.asset.lyrics_path is not None:
@@ -534,6 +556,49 @@ class WorkbenchBridge(QObject):
             self.loadPlayback()
         except Exception:
             self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
+
+    @pyqtSlot(int)
+    def deleteSongAt(self, index: int) -> None:
+        if index < 0 or index >= len(self._songs):
+            self._set_status("请先在左侧选择要删除的歌曲")
+            return
+        removed = self._songs.pop(index)
+        removed_current = self._current_song_key == song_key(removed)
+        self.songsChanged.emit()
+        self._set_status(f"已从列表移除：{removed.name}")
+        if not removed_current:
+            return
+
+        self.stop()
+        if self._songs:
+            next_index = min(index, len(self._songs) - 1)
+            self.loadSongAt(next_index)
+        else:
+            self._current_song_key = None
+            self._playback = None
+            self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]))
+            self._lyric_lines = []
+            self._current_lyric = ""
+            self._next_lyric = ""
+            self._current_lyric_index = -1
+            self.lyricsChanged.emit()
+            self.playbackChanged.emit()
+
+    @pyqtSlot()
+    def clearSongList(self) -> None:
+        self.stop()
+        self._songs = []
+        self._current_song_key = None
+        self._playback = None
+        self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]))
+        self._lyric_lines = []
+        self._current_lyric = ""
+        self._next_lyric = ""
+        self._current_lyric_index = -1
+        self.songsChanged.emit()
+        self.lyricsChanged.emit()
+        self.playbackChanged.emit()
+        self._set_status("已清空左侧歌曲列表，不会删除磁盘文件")
 
     @pyqtSlot()
     def advancePlayback(self) -> None:
@@ -637,12 +702,13 @@ class WorkbenchBridge(QObject):
             self._lyric_lines = []
             self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]))
         self._output_path = project.project_dir / f"{project.name}_export.wav"
+        self._current_song_key = song_key(project.asset)
         self.pathsChanged.emit()
         self.loadPlayback()
         self._upsert_song(project.asset)
         self._set_status(
             f"导入成功：{project.name}（分离={separator_backend}，歌词={lyrics_backend}）。"
-            "已加入左侧歌曲库。"
+            f"{lyrics_backend_status_text(lyrics_backend)}已加入左侧歌曲库。"
         )
 
     @pyqtSlot(object, str, str)
@@ -702,6 +768,8 @@ class WorkbenchBridge(QObject):
 
     def _build_lyrics_transcriber(self, backend: str):
         if backend == "faster-whisper":
+            if not is_module_available("faster_whisper"):
+                raise RuntimeError("faster-whisper 未安装，无法识别歌词。请安装依赖后重试。")
             return FasterWhisperLyricsTranscriber(
                 FasterWhisperConfig(model_size="base", device="cpu", compute_type="int8")
             )
@@ -733,7 +801,25 @@ def sanitize_filename(value: str) -> str:
     return "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in value).strip("_") or "song"
 
 
+def song_key(song: SongAsset) -> tuple[str, str | None]:
+    return (str(song.root), None if song.source_path is None else str(song.source_path))
+
+
+def is_module_available(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
+
+
+def lyrics_backend_status_text(backend: str) -> str:
+    if backend == "faster-whisper":
+        return "faster-whisper 已执行。"
+    if backend == "preview":
+        return "未找到真实歌词时会显示占位提示。"
+    return "未生成歌词，纯音乐或暂无歌词时歌词区为空。"
+
+
 def format_user_error(message: str) -> str:
+    if "faster-whisper" in message or "faster_whisper" in message:
+        return "歌词识别失败：faster-whisper 未安装或不可用。请安装依赖后重试，或切换到 preview/none。"
     if "Format not recognised" in message or "Format not recognized" in message:
         return "导入失败：当前音频格式不能直接读取。请确认 ffmpeg 已放在 plugins/models/ffmpeg，或先转换为 wav。"
     if "ffmpeg" in message and "not found" in message:

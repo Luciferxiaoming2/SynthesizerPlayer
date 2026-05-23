@@ -240,6 +240,25 @@ ApplicationWindow {
                         }
                     }
 
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Button {
+                            text: "删除选中"
+                            enabled: !(root.bridge && root.bridge.importBusy)
+                            Layout.fillWidth: true
+                            onClicked: if (root.bridge) root.bridge.deleteSongAt(songList.currentIndex)
+                        }
+
+                        Button {
+                            text: "清空列表"
+                            enabled: !(root.bridge && root.bridge.importBusy)
+                            Layout.fillWidth: true
+                            onClicked: if (root.bridge) root.bridge.clearSongList()
+                        }
+                    }
+
                     Button {
                         text: "导入歌词文件"
                         Layout.fillWidth: true
@@ -545,6 +564,14 @@ ApplicationWindow {
                         currentIndex: 0
                         Layout.preferredWidth: 170
                         onActivated: if (root.bridge) root.bridge.setLyricsBackend(currentText)
+                    }
+
+                    Text {
+                        text: root.bridge ? root.bridge.lyricsBackendStatus : ""
+                        color: root.gold
+                        font.pixelSize: 12
+                        elide: Text.ElideRight
+                        Layout.preferredWidth: 260
                     }
 
                     Text {
