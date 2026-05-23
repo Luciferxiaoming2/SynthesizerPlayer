@@ -68,7 +68,7 @@ def test_workbench_bridge_scans_and_loads_song_folder(tmp_path):
     assert bridge.vocalPath == str(vocal)
     assert bridge.instrumentalPath == str(instrumental)
     assert bridge.lyricsPath == str(lyrics)
-    assert "Playback loaded" in bridge.status
+    assert "音频已加载" in bridge.status
 
 
 def test_workbench_bridge_selects_audio_device_without_opening_it(tmp_path):
@@ -82,6 +82,25 @@ def test_workbench_bridge_selects_audio_device_without_opening_it(tmp_path):
     assert bridge.audioDeviceNames == ["3: USB Speakers"]
     assert bridge.selectedAudioDeviceIndex == 0
     assert bridge._selected_audio_device_id() == 3
+
+
+def test_workbench_bridge_reports_audio_output_failure_in_chinese(tmp_path, monkeypatch):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+
+    class FailingOutput:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("device unavailable")
+
+    monkeypatch.setattr("ui.main_window.SoundDeviceOutput", FailingOutput)
+
+    bridge.startAudioOutput()
+
+    assert not bridge.audioOutputActive
+    assert "音频播放失败" in bridge.status
 
 
 def test_workbench_bridge_evaluates_alignment(tmp_path):

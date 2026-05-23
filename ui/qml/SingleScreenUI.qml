@@ -25,6 +25,8 @@ ApplicationWindow {
     property color textMuted: "#a89bad"
     property color gold: "#f4bd62"
 
+    Component.onCompleted: if (root.bridge) root.bridge.refreshAudioDevices()
+
     FileDialog {
         id: inputDialog
         title: "选择音频或歌词文件"
@@ -319,20 +321,23 @@ ApplicationWindow {
 
                     Button {
                         text: root.bridge && root.bridge.isPlaying ? "暂停" : "播放"
+                        enabled: !(root.bridge && root.bridge.importBusy)
                         Layout.preferredWidth: 110
                         Layout.preferredHeight: 44
-                        onClicked: if (root.bridge) root.bridge.isPlaying ? root.bridge.pause() : root.bridge.play()
+                        onClicked: if (root.bridge) root.bridge.isPlaying ? root.bridge.pause() : root.bridge.startAudioOutput()
                     }
 
                     Button {
-                        text: root.bridge && root.bridge.audioOutputActive ? "关闭音频" : "真实音频"
+                        text: root.bridge && root.bridge.audioOutputActive ? "关闭音频" : "无声预览"
+                        enabled: !(root.bridge && root.bridge.importBusy)
                         Layout.preferredWidth: 120
                         Layout.preferredHeight: 44
-                        onClicked: if (root.bridge) root.bridge.audioOutputActive ? root.bridge.stopAudioOutput() : root.bridge.startAudioOutput()
+                        onClicked: if (root.bridge) root.bridge.audioOutputActive ? root.bridge.stopAudioOutput() : root.bridge.play()
                     }
 
                     Button {
                         text: "停止"
+                        enabled: !(root.bridge && root.bridge.importBusy)
                         Layout.preferredWidth: 92
                         Layout.preferredHeight: 44
                         onClicked: if (root.bridge) root.bridge.stop()
@@ -363,24 +368,28 @@ ApplicationWindow {
 
                     Button {
                         text: "生成样例"
+                        enabled: !(root.bridge && root.bridge.importBusy)
                         Layout.preferredWidth: 86
                         onClicked: if (root.bridge) root.bridge.generateMockAudio()
                     }
 
                     Button {
                         text: "加载"
+                        enabled: !(root.bridge && root.bridge.importBusy)
                         Layout.preferredWidth: 86
                         onClicked: if (root.bridge) root.bridge.loadPlayback()
                     }
 
                     Button {
                         text: "导出"
+                        enabled: !(root.bridge && root.bridge.importBusy)
                         Layout.preferredWidth: 86
                         onClicked: if (root.bridge) root.bridge.exportMix(toneSlider.value, masterSlider.value)
                     }
 
                     Button {
                         text: "检测"
+                        enabled: !(root.bridge && root.bridge.importBusy)
                         Layout.preferredWidth: 86
                         onClicked: if (root.bridge) root.bridge.evaluateAlignment()
                     }
@@ -508,10 +517,18 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: root.bridge ? root.bridge.outputPath : ""
+                    text: root.bridge ? ("状态：" + root.bridge.status) : ""
                     color: root.gold
                     font.pixelSize: 13
                     elide: Text.ElideMiddle
+                    Layout.fillWidth: true
+                }
+
+                Text {
+                    text: "使用提示：先“导入歌曲”或“生成样例”，再点“播放”。没有声音时点“刷新设备”，在输出设备里选择当前耳机/扬声器；“无声预览”只推进歌词和进度。"
+                    color: root.textMuted
+                    font.pixelSize: 12
+                    elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
             }

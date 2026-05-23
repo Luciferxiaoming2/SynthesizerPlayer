@@ -221,7 +221,7 @@ class WorkbenchBridge(QObject):
                 encoding="utf-8",
             )
             self.loadPlayback()
-            self._set_status(f"Mock ready: {self._mock_dir}")
+            self._set_status(f"样例音频已生成：{self._mock_dir}")
         except Exception:
             self._set_status(traceback.format_exc(limit=1).strip())
 
@@ -232,7 +232,7 @@ class WorkbenchBridge(QObject):
             self._lyrics_sync = LyricPlaybackSynchronizer(load_lyrics_timeline(self._lyrics_path))
             self._update_lyrics()
             self.playbackChanged.emit()
-            self._set_status("Playback loaded")
+            self._set_status("音频已加载，可以点击“播放”试听")
         except Exception:
             self._set_status(traceback.format_exc(limit=1).strip())
 
@@ -271,6 +271,9 @@ class WorkbenchBridge(QObject):
                 self.loadPlayback()
             if self._playback is None:
                 return
+            if self._audio_output_active:
+                self._set_status("正在播放")
+                return
             self._stop_audio_output(reset_engine=False)
             self._audio_output = SoundDeviceOutput(
                 self._playback,
@@ -279,12 +282,12 @@ class WorkbenchBridge(QObject):
             self._audio_output.start()
             self._audio_output_active = True
             self._playback_timer.start()
-            self._set_status("Audio output started")
+            self._set_status("正在播放；如果听不到声音，请刷新并选择右下角输出设备")
             self.playbackChanged.emit()
         except Exception:
             self._audio_output_active = False
             self._audio_output = None
-            self._set_status(traceback.format_exc(limit=1).strip())
+            self._set_status(f"音频播放失败：{traceback.format_exc(limit=1).strip()}")
             self.playbackChanged.emit()
 
     @pyqtSlot()
@@ -299,10 +302,10 @@ class WorkbenchBridge(QObject):
             self._audio_devices = list_output_devices()
             if not self._audio_devices:
                 self._selected_audio_device_index = -1
-                self._set_status("No output audio device found")
+                self._set_status("没有找到可用输出设备，请检查系统声音设置")
             else:
                 self._selected_audio_device_index = 0
-                self._set_status(f"Found {len(self._audio_devices)} output devices")
+                self._set_status(f"已找到 {len(self._audio_devices)} 个输出设备，可在右下角选择耳机或扬声器")
             self.devicesChanged.emit()
         except Exception:
             self._audio_devices = []
@@ -317,7 +320,7 @@ class WorkbenchBridge(QObject):
             self._set_status("Default audio device selected")
         else:
             self._selected_audio_device_index = index
-            self._set_status(f"Selected audio device: {self._audio_devices[index].label}")
+            self._set_status(f"已选择输出设备：{self._audio_devices[index].label}")
         self.devicesChanged.emit()
 
     @pyqtSlot(float)
