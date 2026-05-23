@@ -7,436 +7,662 @@ ApplicationWindow {
     id: root
     width: 1280
     height: 720
-    minimumWidth: 1040
+    minimumWidth: 1080
     minimumHeight: 640
     visible: true
-    title: "Audio Forge"
-    color: "#101114"
+    title: "AI主播演唱助手 - 真人唱功模拟"
+    color: "#100817"
+
     property var bridge: audioWorkbench
     property string fileTarget: "vocal"
+    property color bg: "#100817"
+    property color panel: "#181322"
+    property color panelSoft: "#211a2c"
+    property color panelLine: "#322842"
+    property color accent: "#f04474"
+    property color accentSoft: "#3b1828"
+    property color textMain: "#f5edf4"
+    property color textMuted: "#a89bad"
+    property color gold: "#f4bd62"
 
     FileDialog {
         id: inputDialog
-        title: "Select audio or lyrics file"
+        title: "选择音频或歌词文件"
         onAccepted: if (root.bridge) root.bridge.setPathFromUrl(root.fileTarget, selectedFile.toString())
     }
 
     FileDialog {
         id: songImportDialog
-        title: "Import complete song"
-        nameFilters: ["Audio files (*.wav *.mp3 *.flac *.ogg *.m4a *.aac)", "All files (*)"]
-        onAccepted: if (root.bridge) root.bridge.importSongWithBackends(selectedFile.toString(), separatorPicker.currentText, lyricsBackendPicker.currentText)
+        title: "导入完整歌曲"
+        nameFilters: ["音频文件 (*.wav *.mp3 *.flac *.ogg *.m4a *.aac)", "所有文件 (*)"]
+        onAccepted: if (root.bridge) root.bridge.importSongWithBackendsAsync(selectedFile.toString(), separatorPicker.currentText, lyricsBackendPicker.currentText)
     }
 
     FileDialog {
         id: outputDialog
-        title: "Select output wav"
+        title: "选择导出 wav"
         fileMode: FileDialog.SaveFile
-        nameFilters: ["Wave files (*.wav)"]
+        nameFilters: ["Wave 文件 (*.wav)"]
         onAccepted: if (root.bridge) root.bridge.setPathFromUrl("output", selectedFile.toString())
     }
 
     FolderDialog {
         id: songsFolderDialog
-        title: "Select songs folder"
+        title: "选择歌曲目录"
         onAccepted: if (root.bridge) root.bridge.setSongsRootFromUrl(selectedFolder.toString())
     }
 
     Rectangle {
         anchors.fill: parent
-        color: "#101114"
+        color: root.bg
 
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 28
+        Rectangle {
+            id: titleBar
+            height: 30
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            color: "#5a4a86"
+
+            Text {
+                anchors.left: parent.left
+                anchors.leftMargin: 14
+                anchors.verticalCenter: parent.verticalCenter
+                text: "AI主播演唱助手 - 真人唱功模拟"
+                color: "#f5f1ff"
+                font.pixelSize: 13
+                font.bold: true
+            }
+        }
+
+        RowLayout {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: titleBar.bottom
+            anchors.bottom: controlDeck.top
+            anchors.margins: 16
             spacing: 18
 
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 64
+            Rectangle {
+                Layout.preferredWidth: 330
+                Layout.fillHeight: true
+                radius: 8
+                color: root.panel
+                border.color: root.panelLine
 
-                Label {
-                    text: "Audio Forge"
-                    color: "#f5f1e8"
-                    font.pixelSize: 34
-                    font.bold: true
-                    Layout.fillWidth: true
-                }
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 12
 
-                Label {
-                    text: root.bridge ? root.bridge.status : ""
-                    color: "#a9b7a2"
-                    elide: Text.ElideMiddle
-                    horizontalAlignment: Text.AlignRight
-                    Layout.preferredWidth: 560
+                    Text {
+                        text: "歌曲库"
+                        color: root.accent
+                        font.pixelSize: 23
+                        font.bold: true
+                    }
+
+                    TextField {
+                        enabled: false
+                        Layout.fillWidth: true
+                        placeholderText: "搜索歌曲..."
+                        text: ""
+                        color: root.textMain
+                        placeholderTextColor: "#6f6378"
+                        background: Rectangle {
+                            radius: 6
+                            color: "#211a28"
+                            border.color: "#383040"
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        radius: 6
+                        color: "#15111e"
+                        border.color: "#30283a"
+                        clip: true
+
+                        ListView {
+                            id: songList
+                            anchors.fill: parent
+                            model: root.bridge ? root.bridge.songNames : []
+                            currentIndex: 0
+                            delegate: Rectangle {
+                                width: songList.width
+                                height: 46
+                                color: ListView.isCurrentItem ? root.accent : "transparent"
+
+                                Text {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 14
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: modelData
+                                    color: ListView.isCurrentItem ? "#1b1018" : root.textMain
+                                    font.pixelSize: 15
+                                    elide: Text.ElideRight
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: songList.currentIndex = index
+                                    onDoubleClicked: if (root.bridge) root.bridge.loadSongAt(index)
+                                }
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Button {
+                            text: "选择目录"
+                            Layout.fillWidth: true
+                            onClicked: songsFolderDialog.open()
+                        }
+
+                        Button {
+                            text: "扫描"
+                            Layout.preferredWidth: 78
+                            onClicked: if (root.bridge) root.bridge.scanSongs()
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Button {
+                            text: "加载选中"
+                            Layout.fillWidth: true
+                            onClicked: if (root.bridge) root.bridge.loadSongAt(songList.currentIndex)
+                        }
+
+                        Button {
+                            text: root.bridge && root.bridge.importBusy ? "导入中" : "导入歌曲"
+                            enabled: !(root.bridge && root.bridge.importBusy)
+                            Layout.fillWidth: true
+                            onClicked: songImportDialog.open()
+                        }
+                    }
+
+                    Button {
+                        text: "导入歌词文件"
+                        Layout.fillWidth: true
+                        onClicked: {
+                            root.fileTarget = "lyrics"
+                            inputDialog.nameFilters = ["歌词文件 (*.lrc *.srt)", "所有文件 (*)"]
+                            inputDialog.open()
+                        }
+                    }
                 }
             }
 
-            GridLayout {
+            Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                columns: 2
-                rowSpacing: 18
-                columnSpacing: 18
+                radius: 8
+                color: "#0f0715"
 
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    radius: 8
-                    color: "#191b20"
-                    border.color: "#2b3036"
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 4
 
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 22
-                        spacing: 14
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 42
 
-                        Label {
-                            text: "Stems"
-                            color: "#f5f1e8"
-                            font.pixelSize: 18
+                        Text {
+                            text: "滚动歌词"
+                            color: root.textMain
+                            font.pixelSize: 20
                             font.bold: true
-                        }
-
-                        RowLayout {
                             Layout.fillWidth: true
-                            spacing: 8
-
-                            TextField {
-                                text: root.bridge ? root.bridge.songsRoot : ""
-                                placeholderText: "Songs folder"
-                                color: "#f5f1e8"
-                                selectionColor: "#477d7d"
-                                selectedTextColor: "#ffffff"
-                                Layout.fillWidth: true
-                                onEditingFinished: if (root.bridge) root.bridge.songsRoot = text
-                            }
-
-                            Button {
-                                text: "..."
-                                Layout.preferredWidth: 42
-                                onClicked: songsFolderDialog.open()
-                            }
                         }
 
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
-
-                            ComboBox {
-                                id: songPicker
-                                model: root.bridge ? root.bridge.songNames : []
-                                Layout.fillWidth: true
-                            }
-
-                            Button {
-                                text: "Scan"
-                                Layout.preferredWidth: 72
-                                onClicked: if (root.bridge) root.bridge.scanSongs()
-                            }
-
-                            Button {
-                                text: "Use"
-                                Layout.preferredWidth: 64
-                                onClicked: if (root.bridge) root.bridge.loadSongAt(songPicker.currentIndex)
-                            }
+                        Text {
+                            text: root.bridge ? root.bridge.status : ""
+                            color: root.textMuted
+                            font.pixelSize: 12
+                            elide: Text.ElideMiddle
+                            horizontalAlignment: Text.AlignRight
+                            Layout.preferredWidth: 430
                         }
+                    }
 
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
 
-                            ComboBox {
-                                id: separatorPicker
-                                model: root.bridge ? root.bridge.separatorBackends : []
-                                currentIndex: 0
-                                Layout.fillWidth: true
-                                onActivated: if (root.bridge) root.bridge.setSeparatorBackend(currentText)
+                        Column {
+                            anchors.centerIn: parent
+                            width: parent.width
+                            spacing: 22
+
+                            LyricLine { text: "那又如何"; size: 22; muted: true }
+                            LyricLine { text: "他好像爱我"; size: 22; muted: true }
+
+                            Rectangle {
+                                width: parent.width * 0.88
+                                height: 68
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                radius: 10
+                                color: root.accentSoft
+                                opacity: 0.92
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: root.bridge ? root.bridge.currentLyric : "等待加载歌词"
+                                    color: root.accent
+                                    font.pixelSize: 30
+                                    font.bold: true
+                                    elide: Text.ElideRight
+                                    width: parent.width - 40
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
                             }
 
-                            ComboBox {
-                                id: lyricsBackendPicker
-                                model: root.bridge ? root.bridge.lyricsBackends : []
-                                currentIndex: 0
-                                Layout.fillWidth: true
-                                onActivated: if (root.bridge) root.bridge.setLyricsBackend(currentText)
+                            LyricLine {
+                                text: root.bridge ? root.bridge.nextLyric : ""
+                                size: 22
+                                muted: true
                             }
-                        }
-
-                        PathPicker {
-                            text: root.bridge ? root.bridge.vocalPath : ""
-                            placeholderText: "Vocal wav"
-                            onTextEdited: if (root.bridge) root.bridge.vocalPath = text
-                            onPick: {
-                                root.fileTarget = "vocal"
-                                inputDialog.nameFilters = ["Audio files (*.wav *.flac *.ogg *.aiff)", "All files (*)"]
-                                inputDialog.open()
-                            }
-                        }
-
-                        PathPicker {
-                            text: root.bridge ? root.bridge.instrumentalPath : ""
-                            placeholderText: "Instrumental wav"
-                            onTextEdited: if (root.bridge) root.bridge.instrumentalPath = text
-                            onPick: {
-                                root.fileTarget = "instrumental"
-                                inputDialog.nameFilters = ["Audio files (*.wav *.flac *.ogg *.aiff)", "All files (*)"]
-                                inputDialog.open()
-                            }
-                        }
-
-                        PathPicker {
-                            text: root.bridge ? root.bridge.outputPath : ""
-                            placeholderText: "Output wav"
-                            onTextEdited: if (root.bridge) root.bridge.outputPath = text
-                            onPick: outputDialog.open()
-                        }
-
-                        PathPicker {
-                            text: root.bridge ? root.bridge.lyricsPath : ""
-                            placeholderText: "Lyrics lrc/srt"
-                            onTextEdited: if (root.bridge) root.bridge.lyricsPath = text
-                            onPick: {
-                                root.fileTarget = "lyrics"
-                                inputDialog.nameFilters = ["Lyrics files (*.lrc *.srt)", "All files (*)"]
-                                inputDialog.open()
-                            }
-                        }
-
-                        Item {
-                            Layout.fillHeight: true
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 10
-
-                            Button {
-                                text: "Mock"
-                                Layout.preferredWidth: 112
-                                Layout.preferredHeight: 42
-                                onClicked: if (root.bridge) root.bridge.generateMockAudio()
-                            }
-
-                            Button {
-                                text: "Load"
-                                Layout.preferredWidth: 112
-                                Layout.preferredHeight: 42
-                                onClicked: if (root.bridge) root.bridge.loadPlayback()
-                            }
-
-                            Button {
-                                text: "Import Song"
-                                Layout.preferredWidth: 132
-                                Layout.preferredHeight: 42
-                                onClicked: songImportDialog.open()
-                            }
+                            LyricLine { text: "原来都是我想像的"; size: 21; muted: true }
+                            LyricLine { text: "我也曾快乐"; size: 20; muted: true }
                         }
                     }
                 }
+            }
+        }
 
-                Rectangle {
+        Rectangle {
+            id: controlDeck
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: 280
+            color: "#171020"
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 18
+                spacing: 12
+
+                RowLayout {
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    radius: 8
-                    color: "#171c1d"
-                    border.color: "#2e3b3b"
+                    spacing: 12
 
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 22
-                        spacing: 16
+                    Text {
+                        text: root.bridge ? root.bridge.playbackTime : "00:00 / 00:00"
+                        color: root.accent
+                        font.pixelSize: 16
+                        font.bold: true
+                        Layout.preferredWidth: 138
+                    }
 
-                        Label {
-                            text: "Render"
-                            color: "#f5f1e8"
-                            font.pixelSize: 18
-                            font.bold: true
-                        }
-
-                        Label {
-                            text: "Tone drift " + Math.round(toneSlider.value * 100) + "%"
-                            color: "#d9e2d0"
-                            font.pixelSize: 14
-                        }
-
-                        Slider {
-                            id: toneSlider
-                            from: 0.0
-                            to: 1.0
-                            value: 0.4
-                            stepSize: 0.05
-                            Layout.fillWidth: true
-                        }
-
-                        Label {
-                            text: "Master " + masterSlider.value.toFixed(1) + " dB"
-                            color: "#d9e2d0"
-                            font.pixelSize: 14
-                        }
-
-                        Slider {
-                            id: masterSlider
-                            from: -12.0
-                            to: 3.0
-                            value: -3.0
-                            stepSize: 0.5
-                            Layout.fillWidth: true
-                        }
-
-                        Label {
-                            text: "Vocal " + vocalGain.value.toFixed(2) + "  Inst " + instGain.value.toFixed(2)
-                            color: "#d9e2d0"
-                            font.pixelSize: 14
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 12
-
-                            Slider {
-                                id: vocalGain
-                                from: 0.0
-                                to: 1.5
-                                value: 1.0
-                                stepSize: 0.05
-                                Layout.fillWidth: true
-                                onMoved: if (root.bridge) root.bridge.setTrackGains(value, instGain.value)
-                            }
-
-                            Slider {
-                                id: instGain
-                                from: 0.0
-                                to: 1.5
-                                value: 1.0
-                                stepSize: 0.05
-                                Layout.fillWidth: true
-                                onMoved: if (root.bridge) root.bridge.setTrackGains(vocalGain.value, value)
-                            }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
-
-                            ComboBox {
-                                id: audioDevicePicker
-                                model: root.bridge ? root.bridge.audioDeviceNames : []
-                                currentIndex: root.bridge ? root.bridge.selectedAudioDeviceIndex : -1
-                                Layout.fillWidth: true
-                                onActivated: if (root.bridge) root.bridge.selectAudioDevice(index)
-                            }
-
-                            Button {
-                                text: "Devices"
-                                Layout.preferredWidth: 92
-                                onClicked: if (root.bridge) root.bridge.refreshAudioDevices()
-                            }
-                        }
-
-                        Label {
-                            text: root.bridge ? root.bridge.currentLyric : ""
-                            color: "#f5f1e8"
-                            font.pixelSize: 24
-                            font.bold: true
-                            elide: Text.ElideRight
-                            Layout.fillWidth: true
-                        }
-
-                        Label {
-                            text: root.bridge ? root.bridge.nextLyric : ""
-                            color: "#9da8a0"
-                            font.pixelSize: 14
-                            elide: Text.ElideRight
-                            Layout.fillWidth: true
-                        }
-
-                        Slider {
-                            id: progressSlider
-                            from: 0.0
-                            to: 1.0
-                            value: root.bridge ? root.bridge.playbackProgress : 0.0
-                            Layout.fillWidth: true
-                            onMoved: if (root.bridge) root.bridge.seekProgress(value)
-                        }
-
-                        Label {
-                            text: root.bridge ? root.bridge.playbackTime : "00:00 / 00:00"
-                            color: "#d9e2d0"
-                            font.pixelSize: 13
-                        }
-
-                        Item {
-                            Layout.fillHeight: true
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 10
-
-                            Button {
-                                text: root.bridge && root.bridge.isPlaying ? "Pause" : "Play"
-                                Layout.preferredWidth: 108
-                                Layout.preferredHeight: 44
-                                onClicked: if (root.bridge) root.bridge.isPlaying ? root.bridge.pause() : root.bridge.play()
-                            }
-
-                            Button {
-                                text: root.bridge && root.bridge.audioOutputActive ? "Audio Off" : "Audio"
-                                Layout.preferredWidth: 108
-                                Layout.preferredHeight: 44
-                                onClicked: if (root.bridge) root.bridge.audioOutputActive ? root.bridge.stopAudioOutput() : root.bridge.startAudioOutput()
-                            }
-
-                            Button {
-                                text: "Stop"
-                                Layout.preferredWidth: 96
-                                Layout.preferredHeight: 44
-                                onClicked: if (root.bridge) root.bridge.stop()
-                            }
-
-                            Button {
-                                text: "Export"
-                                Layout.preferredWidth: 108
-                                Layout.preferredHeight: 44
-                                onClicked: if (root.bridge) root.bridge.exportMix(toneSlider.value, masterSlider.value)
-                            }
-
-                            Button {
-                                text: "Check"
-                                Layout.preferredWidth: 108
-                                Layout.preferredHeight: 44
-                                onClicked: if (root.bridge) root.bridge.evaluateAlignment()
-                            }
-                        }
+                    Slider {
+                        id: progressSlider
+                        from: 0.0
+                        to: 1.0
+                        value: root.bridge ? root.bridge.playbackProgress : 0.0
+                        Layout.fillWidth: true
+                        onMoved: if (root.bridge) root.bridge.seekProgress(value)
                     }
                 }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 18
+
+                    Button {
+                        text: root.bridge && root.bridge.isPlaying ? "暂停" : "播放"
+                        Layout.preferredWidth: 110
+                        Layout.preferredHeight: 44
+                        onClicked: if (root.bridge) root.bridge.isPlaying ? root.bridge.pause() : root.bridge.play()
+                    }
+
+                    Button {
+                        text: root.bridge && root.bridge.audioOutputActive ? "关闭音频" : "真实音频"
+                        Layout.preferredWidth: 120
+                        Layout.preferredHeight: 44
+                        onClicked: if (root.bridge) root.bridge.audioOutputActive ? root.bridge.stopAudioOutput() : root.bridge.startAudioOutput()
+                    }
+
+                    Button {
+                        text: "停止"
+                        Layout.preferredWidth: 92
+                        Layout.preferredHeight: 44
+                        onClicked: if (root.bridge) root.bridge.stop()
+                    }
+
+                    Button {
+                        text: "人声静音"
+                        enabled: false
+                        Layout.preferredWidth: 118
+                        Layout.preferredHeight: 44
+                    }
+
+                    Button {
+                        text: "伴奏静音"
+                        enabled: false
+                        Layout.preferredWidth: 118
+                        Layout.preferredHeight: 44
+                    }
+
+                    Button {
+                        text: "真人唱功：关"
+                        enabled: false
+                        Layout.preferredWidth: 138
+                        Layout.preferredHeight: 44
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    Button {
+                        text: "生成样例"
+                        Layout.preferredWidth: 86
+                        onClicked: if (root.bridge) root.bridge.generateMockAudio()
+                    }
+
+                    Button {
+                        text: "加载"
+                        Layout.preferredWidth: 86
+                        onClicked: if (root.bridge) root.bridge.loadPlayback()
+                    }
+
+                    Button {
+                        text: "导出"
+                        Layout.preferredWidth: 86
+                        onClicked: if (root.bridge) root.bridge.exportMix(toneSlider.value, masterSlider.value)
+                    }
+
+                    Button {
+                        text: "检测"
+                        Layout.preferredWidth: 86
+                        onClicked: if (root.bridge) root.bridge.evaluateAlignment()
+                    }
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 3
+                    rowSpacing: 16
+                    columnSpacing: 26
+
+                    DisabledControlRow {
+                        title: "歌词字体"
+                        valueText: "22px"
+                        Layout.fillWidth: true
+                    }
+
+                    DisabledControlRow {
+                        title: "歌词偏移"
+                        valueText: "2.2秒"
+                        Layout.fillWidth: true
+                    }
+
+                    SliderControlRow {
+                        title: "跑调强度"
+                        slider: toneSlider
+                        from: 0.0
+                        to: 1.0
+                        decimals: 0
+                        suffix: "%"
+                        multiplier: 100
+                        Layout.fillWidth: true
+                    }
+
+                    SliderControlRow {
+                        title: "人声"
+                        slider: vocalGain
+                        from: 0.0
+                        to: 1.5
+                        decimals: 0
+                        suffix: "%"
+                        multiplier: 100
+                        Layout.fillWidth: true
+                    }
+
+                    SliderControlRow {
+                        title: "伴奏"
+                        slider: instGain
+                        from: 0.0
+                        to: 1.5
+                        decimals: 0
+                        suffix: "%"
+                        multiplier: 100
+                        Layout.fillWidth: true
+                    }
+
+                    SliderControlRow {
+                        title: "主输出"
+                        slider: masterSlider
+                        from: -12.0
+                        to: 3.0
+                        decimals: 1
+                        suffix: " dB"
+                        Layout.fillWidth: true
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    Text {
+                        text: "分离后端"
+                        color: root.textMuted
+                        font.pixelSize: 13
+                    }
+
+                    ComboBox {
+                        id: separatorPicker
+                        model: root.bridge ? root.bridge.separatorBackends : []
+                        currentIndex: 0
+                        Layout.preferredWidth: 150
+                        onActivated: if (root.bridge) root.bridge.setSeparatorBackend(currentText)
+                    }
+
+                    Text {
+                        text: "歌词后端"
+                        color: root.textMuted
+                        font.pixelSize: 13
+                    }
+
+                    ComboBox {
+                        id: lyricsBackendPicker
+                        model: root.bridge ? root.bridge.lyricsBackends : []
+                        currentIndex: 0
+                        Layout.preferredWidth: 170
+                        onActivated: if (root.bridge) root.bridge.setLyricsBackend(currentText)
+                    }
+
+                    Text {
+                        text: "输出设备"
+                        color: root.textMuted
+                        font.pixelSize: 13
+                    }
+
+                    ComboBox {
+                        id: audioDevicePicker
+                        model: root.bridge ? root.bridge.audioDeviceNames : []
+                        currentIndex: root.bridge ? root.bridge.selectedAudioDeviceIndex : -1
+                        Layout.fillWidth: true
+                        onActivated: if (root.bridge) root.bridge.selectAudioDevice(index)
+                    }
+
+                    Button {
+                        text: "刷新设备"
+                        Layout.preferredWidth: 100
+                        onClicked: if (root.bridge) root.bridge.refreshAudioDevices()
+                    }
+
+                    Button {
+                        text: "选择导出"
+                        Layout.preferredWidth: 100
+                        onClicked: outputDialog.open()
+                    }
+                }
+
+                Text {
+                    text: root.bridge ? root.bridge.outputPath : ""
+                    color: root.gold
+                    font.pixelSize: 13
+                    elide: Text.ElideMiddle
+                    Layout.fillWidth: true
+                }
+            }
+
+            Slider {
+                id: toneSlider
+                visible: false
+                from: 0.0
+                to: 1.0
+                value: 0.4
+            }
+
+            Slider {
+                id: vocalGain
+                visible: false
+                from: 0.0
+                to: 1.5
+                value: 1.0
+                onValueChanged: if (root.bridge) root.bridge.setTrackGains(value, instGain.value)
+            }
+
+            Slider {
+                id: instGain
+                visible: false
+                from: 0.0
+                to: 1.5
+                value: 1.0
+                onValueChanged: if (root.bridge) root.bridge.setTrackGains(vocalGain.value, value)
+            }
+
+            Slider {
+                id: masterSlider
+                visible: false
+                from: -12.0
+                to: 3.0
+                value: -3.0
             }
         }
     }
 
-    component PathPicker: RowLayout {
-        property alias text: field.text
-        property alias placeholderText: field.placeholderText
-        signal textEdited()
-        signal pick()
+    component LyricLine: Text {
+        property bool muted: false
+        property int size: 20
+        width: parent ? parent.width : 800
+        color: muted ? root.textMuted : root.textMain
+        font.pixelSize: size
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+    }
 
-        Layout.fillWidth: true
-        spacing: 8
+    component SliderControlRow: RowLayout {
+        property string title: ""
+        property Slider slider
+        property real from: 0.0
+        property real to: 1.0
+        property int decimals: 0
+        property real multiplier: 1.0
+        property string suffix: ""
 
-        TextField {
-            id: field
-            color: "#f5f1e8"
-            selectionColor: "#477d7d"
-            selectedTextColor: "#ffffff"
-            Layout.fillWidth: true
-            onEditingFinished: parent.textEdited()
+        function valueText() {
+            var shown = slider ? slider.value * multiplier : 0
+            return shown.toFixed(decimals) + suffix
         }
 
-        Button {
-            text: "..."
-            Layout.preferredWidth: 42
-            onClicked: parent.pick()
+        spacing: 10
+
+        Text {
+            text: title
+            color: root.textMain
+            font.pixelSize: 14
+            Layout.preferredWidth: 82
+        }
+
+        Slider {
+            id: visualSlider
+            Layout.fillWidth: true
+            Layout.preferredHeight: 22
+            from: parent.from
+            to: parent.to
+            value: parent.slider ? parent.slider.value : parent.from
+            onMoved: if (parent.slider) parent.slider.value = value
+
+            background: Rectangle {
+                x: visualSlider.leftPadding
+                y: visualSlider.topPadding + visualSlider.availableHeight / 2 - height / 2
+                width: visualSlider.availableWidth
+                height: 6
+                radius: 3
+                color: "#332b3a"
+
+                Rectangle {
+                    width: visualSlider.visualPosition * parent.width
+                    height: parent.height
+                    radius: 3
+                    color: root.accent
+                }
+            }
+
+            handle: Rectangle {
+                x: visualSlider.leftPadding + visualSlider.visualPosition * (visualSlider.availableWidth - width)
+                y: visualSlider.topPadding + visualSlider.availableHeight / 2 - height / 2
+                width: 16
+                height: 16
+                radius: 8
+                color: "#f8d7e1"
+                border.color: root.accent
+            }
+        }
+
+        Text {
+            text: valueText()
+            color: root.accent
+            font.pixelSize: 14
+            horizontalAlignment: Text.AlignRight
+            Layout.preferredWidth: 54
+        }
+    }
+
+    component DisabledControlRow: RowLayout {
+        property string title: ""
+        property string valueText: ""
+
+        spacing: 10
+
+        Text {
+            text: title
+            color: "#665d6a"
+            font.pixelSize: 14
+            Layout.preferredWidth: 82
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 6
+            radius: 3
+            color: "#2a2530"
+
+            Rectangle {
+                width: parent.width * 0.38
+                height: parent.height
+                radius: 3
+                color: "#5d5663"
+            }
+        }
+
+        Text {
+            text: valueText
+            color: "#766d79"
+            font.pixelSize: 14
+            horizontalAlignment: Text.AlignRight
+            Layout.preferredWidth: 54
         }
     }
 }

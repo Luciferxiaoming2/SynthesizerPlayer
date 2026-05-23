@@ -13,6 +13,10 @@ a = Analysis(
         (str(ROOT / "ui" / "qml"), "ui/qml"),
         (str(ROOT / "README.md"), "."),
         (str(ROOT / "docs" / "runbooks" / "packaging_windows.md"), "docs/runbooks"),
+        (
+            str(ROOT / "core_engine" / "player" / "demucs_soundfile_runner.py"),
+            "core_engine/player",
+        ),
     ],
     hiddenimports=[
         "PyQt6.QtCore",

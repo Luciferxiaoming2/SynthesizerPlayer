@@ -21,6 +21,8 @@ class SongImportConfig:
     lyrics_transcriber: LyricsTranscriber | None = None
     audio_standardizer: FfmpegAudioStandardizer | None = None
     copy_source: bool = True
+    separator_backend: str = "preview"
+    lyrics_backend: str = "none"
 
 
 @dataclass(frozen=True)
@@ -73,7 +75,7 @@ def import_single_song(config: SongImportConfig) -> ImportedSongProject:
         instrumental_path=stems.instrumental_path,
         lyrics_path=lyrics_path,
     )
-    write_manifest(project_dir, source_path, project_source, stems, lyrics_path)
+    write_manifest(project_dir, source_path, project_source, stems, lyrics_path, config)
     return ImportedSongProject(
         name=project_dir.name,
         project_dir=project_dir,
@@ -116,6 +118,7 @@ def write_manifest(
     project_source: Path,
     stems: StemPair,
     lyrics_path: Path | None,
+    config: SongImportConfig,
 ) -> None:
     manifest = {
         "original_source": str(original_source),
@@ -123,6 +126,10 @@ def write_manifest(
         "vocal_path": str(stems.vocal_path),
         "instrumental_path": str(stems.instrumental_path),
         "lyrics_path": None if lyrics_path is None else str(lyrics_path),
+        "separator_backend": config.separator_backend,
+        "lyrics_backend": config.lyrics_backend,
+        "standardized_audio": config.audio_standardizer is not None,
+        "copied_source": config.copy_source,
     }
     (project_dir / "project.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2),

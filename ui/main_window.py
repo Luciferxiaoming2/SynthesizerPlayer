@@ -5,7 +5,7 @@ import os
 import sys
 import traceback
 
-from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQml import QQmlApplicationEngine
 
@@ -38,6 +38,25 @@ from harness.eval_harness.audio_latency_test import evaluate_latency
 from harness.cli_harness.generate_mock_audio import build_mock_stems
 
 
+class ImportSongWorker(QObject):
+    finished = pyqtSignal(object, str, str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, config: SongImportConfig, separator_backend: str, lyrics_backend: str) -> None:
+        super().__init__()
+        self._config = config
+        self._separator_backend = separator_backend
+        self._lyrics_backend = lyrics_backend
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            project = import_single_song(self._config)
+            self.finished.emit(project, self._separator_backend, self._lyrics_backend)
+        except Exception:
+            self.failed.emit(traceback.format_exc(limit=1).strip())
+
+
 class WorkbenchBridge(QObject):
     statusChanged = pyqtSignal()
     pathsChanged = pyqtSignal()
@@ -46,6 +65,7 @@ class WorkbenchBridge(QObject):
     songsChanged = pyqtSignal()
     devicesChanged = pyqtSignal()
     importOptionsChanged = pyqtSignal()
+    importBusyChanged = pyqtSignal()
 
     def __init__(self, root: Path) -> None:
         super().__init__()
@@ -63,6 +83,9 @@ class WorkbenchBridge(QObject):
         self._selected_audio_device_index = -1
         self._separator_backend = "preview"
         self._lyrics_backend = "preview"
+        self._import_busy = False
+        self._import_thread: QThread | None = None
+        self._import_worker: ImportSongWorker | None = None
         self._playback: DualTrackPlaybackEngine | None = None
         self._audio_output: SoundDeviceOutput | None = None
         self._audio_output_active = False
@@ -113,6 +136,10 @@ class WorkbenchBridge(QObject):
     @pyqtProperty(str, notify=importOptionsChanged)
     def lyricsBackend(self) -> str:
         return self._lyrics_backend
+
+    @pyqtProperty(bool, notify=importBusyChanged)
+    def importBusy(self) -> bool:
+        return self._import_busy
 
     @pyqtProperty(str, notify=pathsChanged)
     def vocalPath(self) -> str:
@@ -341,23 +368,42 @@ class WorkbenchBridge(QObject):
             self._lyrics_backend = lyrics_backend
             self.importOptionsChanged.emit()
             project = import_single_song(
-                SongImportConfig(
-                    source_path=source_path,
-                    projects_root=self._projects_root,
-                    separator=self._build_separator(separator_backend),
-                    lyrics_transcriber=self._build_lyrics_transcriber(lyrics_backend),
-                )
+                self._build_import_config(source_path, separator_backend, lyrics_backend)
             )
-            self._vocal_path = project.stems.vocal_path
-            self._instrumental_path = project.stems.instrumental_path
-            if project.lyrics_path is not None:
-                self._lyrics_path = project.lyrics_path
-            self._output_path = project.project_dir / f"{project.name}_export.wav"
-            self.pathsChanged.emit()
-            self._set_status(f"Imported song project: {project.project_dir}")
-            self.loadPlayback()
+            self._apply_imported_project(project, separator_backend, lyrics_backend)
         except Exception:
             self._set_status(traceback.format_exc(limit=1).strip())
+
+    @pyqtSlot(str, str, str)
+    def importSongWithBackendsAsync(
+        self, url: str, separator_backend: str, lyrics_backend: str
+    ) -> None:
+        if self._import_busy:
+            self._set_status("Import already running")
+            return
+        source_path = Path(QUrl(url).toLocalFile())
+        self._separator_backend = separator_backend
+        self._lyrics_backend = lyrics_backend
+        self.importOptionsChanged.emit()
+        self._set_import_busy(True)
+        self._set_status(f"Importing song... (separator={separator_backend}, lyrics={lyrics_backend})")
+
+        self._import_thread = QThread(self)
+        self._import_worker = ImportSongWorker(
+            self._build_import_config(source_path, separator_backend, lyrics_backend),
+            separator_backend,
+            lyrics_backend,
+        )
+        self._import_worker.moveToThread(self._import_thread)
+        self._import_thread.started.connect(self._import_worker.run)
+        self._import_worker.finished.connect(self._handle_import_finished)
+        self._import_worker.failed.connect(self._handle_import_failed)
+        self._import_worker.finished.connect(self._import_thread.quit)
+        self._import_worker.failed.connect(self._import_thread.quit)
+        self._import_worker.finished.connect(self._import_worker.deleteLater)
+        self._import_worker.failed.connect(self._import_worker.deleteLater)
+        self._import_thread.finished.connect(self._cleanup_import_thread)
+        self._import_thread.start()
 
     @pyqtSlot(str)
     def setSeparatorBackend(self, backend: str) -> None:
@@ -484,11 +530,75 @@ class WorkbenchBridge(QObject):
             return None
         return self._audio_devices[self._selected_audio_device_index].id
 
+    def _build_import_config(
+        self, source_path: Path, separator_backend: str, lyrics_backend: str
+    ) -> SongImportConfig:
+        return SongImportConfig(
+            source_path=source_path,
+            projects_root=self._projects_root,
+            separator=self._build_separator(separator_backend),
+            lyrics_transcriber=self._build_lyrics_transcriber(lyrics_backend),
+            separator_backend=separator_backend,
+            lyrics_backend=lyrics_backend,
+        )
+
+    def _apply_imported_project(self, project, separator_backend: str, lyrics_backend: str) -> None:
+        self._vocal_path = project.stems.vocal_path
+        self._instrumental_path = project.stems.instrumental_path
+        if project.lyrics_path is not None:
+            self._lyrics_path = project.lyrics_path
+        self._output_path = project.project_dir / f"{project.name}_export.wav"
+        self.pathsChanged.emit()
+        self.loadPlayback()
+        self._set_status(
+            f"Imported song project: {project.project_dir} "
+            f"(separator={separator_backend}, lyrics={lyrics_backend})"
+        )
+
+    @pyqtSlot(object, str, str)
+    def _handle_import_finished(self, project, separator_backend: str, lyrics_backend: str) -> None:
+        self._set_import_busy(False)
+        self._apply_imported_project(project, separator_backend, lyrics_backend)
+
+    @pyqtSlot(str)
+    def _handle_import_failed(self, message: str) -> None:
+        self._set_import_busy(False)
+        self._set_status(message)
+
+    @pyqtSlot()
+    def _cleanup_import_thread(self) -> None:
+        if self._import_thread is not None:
+            self._import_thread.deleteLater()
+        self._import_thread = None
+        self._import_worker = None
+
+    def _set_import_busy(self, value: bool) -> None:
+        if self._import_busy == value:
+            return
+        self._import_busy = value
+        self.importBusyChanged.emit()
+
     def _build_separator(self, backend: str):
         if backend == "demucs":
             # GUI 默认仍使用 CPU，避免在普通轻薄本上误选不可用 GPU。
+            ffmpeg_dir = first_existing_dir(
+                self._root / "plugins" / "models" / "ffmpeg",
+                self._root
+                / "源代码"
+                / "Synthesizer Player"
+                / "Synthesizer Player"
+                / "ffmpeg"
+                / "bin",
+            )
+            torch_home = self._root / "plugins" / "models" / "torch"
             return DemucsStemSeparator(
-                DemucsSeparatorConfig(executable=sys.executable, device="cpu")
+                DemucsSeparatorConfig(
+                    executable=resolve_demucs_python(self._root),
+                    device="cpu",
+                    ffmpeg_dir=ffmpeg_dir,
+                    torch_home=torch_home if torch_home.exists() else None,
+                    runner_script=demucs_runner_script(self._root),
+                )
             )
         return PreviewStemSeparator()
 
@@ -514,6 +624,43 @@ def format_seconds(seconds: float) -> str:
 
 def sanitize_filename(value: str) -> str:
     return "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in value).strip("_") or "song"
+
+
+def first_existing_dir(*candidates: Path) -> Path | None:
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def resolve_demucs_python(root: Path) -> str:
+    configured = os.environ.get("AUDIO_FORGE_DEMUCS_PYTHON")
+    if configured:
+        return configured
+
+    candidates = [
+        root / "plugins" / "models" / "python" / "python.exe",
+        root / "python" / "python.exe",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    return "python"
+
+
+def demucs_runner_script(root: Path) -> Path | None:
+    candidates = [
+        root / "core_engine" / "player" / "demucs_soundfile_runner.py",
+        root / "_internal" / "core_engine" / "player" / "demucs_soundfile_runner.py",
+        Path(__file__).resolve().parents[1] / "core_engine" / "player" / "demucs_soundfile_runner.py",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def main() -> None:

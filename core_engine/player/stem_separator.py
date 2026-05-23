@@ -85,6 +85,8 @@ class DemucsSeparatorConfig:
     ffmpeg_dir: Path | None = None
     torch_home: Path | None = None
     prefer_python_api: bool = True
+    use_soundfile_writer: bool = True
+    runner_script: Path | None = None
 
 
 class DemucsStemSeparator(StemSeparator):
@@ -99,7 +101,7 @@ class DemucsStemSeparator(StemSeparator):
 
         # Demucs 会输出到 <out>/<model>/<歌曲名>/vocals.wav 和 no_vocals.wav；
         # 这里统一搬运成项目内部固定命名，避免后续播放/导出层关心后端差异。
-        subprocess.run(self._command(source_path, work_dir), check=True)
+        subprocess.run(self._command(source_path, work_dir), check=True, env=self._environment())
         demucs_song_dir = work_dir / self._config.model_name / source_path.stem
         source_vocal = demucs_song_dir / "vocals.wav"
         source_instrumental = demucs_song_dir / "no_vocals.wav"
@@ -115,10 +117,19 @@ class DemucsStemSeparator(StemSeparator):
         return pair
 
     def _command(self, source_path: Path, work_dir: Path) -> list[str]:
-        return [
-            self._config.executable,
-            "-m",
-            "demucs",
+        command = [self._config.executable]
+        if self._config.use_soundfile_writer and self._config.runner_script is not None:
+            command.append(str(self._config.runner_script))
+        else:
+            command.extend(
+                [
+                    "-m",
+                    "core_engine.player.demucs_soundfile_runner"
+                    if self._config.use_soundfile_writer
+                    else "demucs",
+                ]
+            )
+        command.extend([
             "--two-stems",
             self._config.two_stems,
             "-n",
@@ -127,5 +138,19 @@ class DemucsStemSeparator(StemSeparator):
             self._config.device,
             "-o",
             str(work_dir),
-            str(source_path),
-        ]
+        ])
+        if self._config.segment is not None:
+            command.extend(["--segment", str(self._config.segment)])
+        if self._config.jobs > 1:
+            command.extend(["-j", str(self._config.jobs)])
+        command.append(str(source_path))
+        return command
+
+    def _environment(self) -> dict[str, str]:
+        environment = os.environ.copy()
+        if self._config.torch_home is not None:
+            environment["TORCH_HOME"] = str(self._config.torch_home)
+        if self._config.ffmpeg_dir is not None:
+            existing_path = environment.get("PATH", "")
+            environment["PATH"] = str(self._config.ffmpeg_dir) + os.pathsep + existing_path
+        return environment

@@ -4,7 +4,7 @@ import argparse
 import shlex
 from pathlib import Path
 
-from core_engine.external_tools import FfmpegAudioStandardizer, FfmpegConfig
+from core_engine.external_tools import FfmpegAudioStandardizer, FfmpegConfig, resolve_audio_tool
 from core_engine.importer import SongImportConfig, import_single_song
 from core_engine.player.stem_separator import (
     DemucsSeparatorConfig,
@@ -33,6 +33,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--demucs-python", default="python", help="Python executable used for -m demucs.")
     parser.add_argument("--demucs-model", default="htdemucs")
     parser.add_argument("--demucs-device", default="cpu", help="Use cpu by default for Intel laptops.")
+    parser.add_argument(
+        "--demucs-ffmpeg-dir",
+        type=Path,
+        default=None,
+        help="Directory containing ffmpeg.exe and ffprobe.exe for Demucs.",
+    )
+    parser.add_argument(
+        "--demucs-torch-home",
+        type=Path,
+        default=None,
+        help="TORCH_HOME directory used by Demucs model cache.",
+    )
+    parser.add_argument(
+        "--demucs-runner-script",
+        type=Path,
+        default=None,
+        help="Optional demucs_soundfile_runner.py path for packaged sidecar Python.",
+    )
     parser.add_argument(
         "--separator-command",
         default=None,
@@ -71,11 +89,17 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     if args.backend == "demucs":
+        ffmpeg_dir = args.demucs_ffmpeg_dir or default_local_ffmpeg_dir()
+        torch_home = args.demucs_torch_home or default_local_torch_home()
+        runner_script = args.demucs_runner_script or default_demucs_runner_script()
         separator = DemucsStemSeparator(
             DemucsSeparatorConfig(
                 executable=args.demucs_python,
                 model_name=args.demucs_model,
                 device=args.demucs_device,
+                ffmpeg_dir=ffmpeg_dir,
+                torch_home=torch_home,
+                runner_script=runner_script,
             )
         )
     elif args.backend == "external":
@@ -107,9 +131,15 @@ def main() -> None:
 
     audio_standardizer = None
     if args.standardize_audio:
+        ffmpeg_executable = args.ffmpeg
+        if ffmpeg_executable == "ffmpeg":
+            try:
+                ffmpeg_executable = resolve_audio_tool("ffmpeg", Path.cwd())
+            except FileNotFoundError:
+                ffmpeg_executable = args.ffmpeg
         audio_standardizer = FfmpegAudioStandardizer(
             FfmpegConfig(
-                executable=args.ffmpeg,
+                executable=ffmpeg_executable,
                 sample_rate=args.standard_sample_rate,
                 channels=args.standard_channels,
             )
@@ -123,6 +153,8 @@ def main() -> None:
             lyrics_transcriber=lyrics_transcriber,
             audio_standardizer=audio_standardizer,
             copy_source=not args.no_copy_source,
+            separator_backend=args.backend,
+            lyrics_backend=args.lyrics_backend,
         )
     )
     print(f"project={project.project_dir}")
@@ -130,6 +162,27 @@ def main() -> None:
     print(f"vocal={project.stems.vocal_path}")
     print(f"instrumental={project.stems.instrumental_path}")
     print(f"lyrics={project.lyrics_path}")
+
+
+def default_local_ffmpeg_dir() -> Path | None:
+    candidates = [
+        Path("plugins") / "models" / "ffmpeg",
+        Path("源代码") / "Synthesizer Player" / "Synthesizer Player" / "ffmpeg" / "bin",
+    ]
+    for candidate in candidates:
+        if (candidate / "ffmpeg.exe").exists() and (candidate / "ffprobe.exe").exists():
+            return candidate
+    return None
+
+
+def default_local_torch_home() -> Path | None:
+    candidate = Path("plugins") / "models" / "torch"
+    return candidate if candidate.exists() else None
+
+
+def default_demucs_runner_script() -> Path | None:
+    candidate = Path("core_engine") / "player" / "demucs_soundfile_runner.py"
+    return candidate if candidate.exists() else None
 
 
 if __name__ == "__main__":

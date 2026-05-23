@@ -1,10 +1,12 @@
 import json
+import os
 from pathlib import Path
 
 import numpy as np
 
 from core_engine.importer import SongImportConfig, import_single_song
 from core_engine.external_tools import FfmpegAudioStandardizer
+from core_engine.player.demucs_soundfile_runner import save_audio_with_soundfile
 from core_engine.player.stem_separator import DemucsSeparatorConfig, DemucsStemSeparator, PreviewStemSeparator
 from core_engine.player.sync_buffer import read_audio, write_audio
 from core_engine.transcription import PreviewLyricsTranscriber
@@ -38,6 +40,10 @@ def test_import_single_song_creates_project_stems_and_manifest(tmp_path):
     assert vocal.shape == instrumental.shape == source_audio.shape
     assert vocal_rate == instrumental_rate == sample_rate
     assert manifest["lyrics_path"] == str(project.lyrics_path)
+    assert manifest["separator_backend"] == "preview"
+    assert manifest["lyrics_backend"] == "none"
+    assert manifest["standardized_audio"] is False
+    assert manifest["copied_source"] is True
 
 
 def test_import_single_song_uses_unique_project_dirs(tmp_path):
@@ -87,6 +93,8 @@ def test_import_single_song_can_standardize_audio_before_separation(tmp_path):
 
     assert project.source_path.name == "original_standard.wav"
     assert project.source_path.exists()
+    manifest = json.loads((project.project_dir / "project.json").read_text(encoding="utf-8"))
+    assert manifest["standardized_audio"] is True
 
 
 def test_demucs_separator_builds_cpu_command():
@@ -99,7 +107,7 @@ def test_demucs_separator_builds_cpu_command():
     assert command == [
         "py",
         "-m",
-        "demucs",
+        "core_engine.player.demucs_soundfile_runner",
         "--two-stems",
         "vocals",
         "-n",
@@ -108,5 +116,45 @@ def test_demucs_separator_builds_cpu_command():
         "cpu",
         "-o",
         "out",
+        "--segment",
+        "7",
         "song.wav",
     ]
+
+
+def test_demucs_separator_can_use_runner_script():
+    separator = DemucsStemSeparator(
+        DemucsSeparatorConfig(executable="py", runner_script=Path("runner.py"))
+    )
+
+    command = separator._command(Path("song.wav"), Path("out"))
+
+    assert command[:2] == ["py", "runner.py"]
+    assert "-m" not in command
+
+
+def test_demucs_separator_can_inject_local_runtime_environment(tmp_path, monkeypatch):
+    ffmpeg_dir = tmp_path / "ffmpeg"
+    torch_home = tmp_path / "torch"
+    separator = DemucsStemSeparator(
+        DemucsSeparatorConfig(ffmpeg_dir=ffmpeg_dir, torch_home=torch_home)
+    )
+    monkeypatch.setenv("PATH", "existing-path")
+
+    environment = separator._environment()
+
+    assert environment["TORCH_HOME"] == str(torch_home)
+    assert environment["PATH"].split(os.pathsep)[0] == str(ffmpeg_dir)
+
+
+def test_demucs_soundfile_runner_writes_wav_without_torchaudio(tmp_path):
+    import torch
+
+    output_path = tmp_path / "stem.wav"
+    wav = torch.zeros((2, 1_000), dtype=torch.float32)
+
+    save_audio_with_soundfile(wav, output_path, samplerate=16_000)
+
+    audio, sample_rate = read_audio(output_path)
+    assert audio.shape == (1_000, 2)
+    assert sample_rate == 16_000

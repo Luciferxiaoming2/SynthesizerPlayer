@@ -7,6 +7,8 @@ from core_engine.external_tools.audio_tools import (
     RubberbandConfig,
     RubberbandTimePitchProcessor,
     detect_audio_tool,
+    project_audio_tool_dirs,
+    resolve_audio_tool,
 )
 
 __all__ = [
@@ -16,4 +18,6 @@ __all__ = [
     "RubberbandConfig",
     "RubberbandTimePitchProcessor",
     "detect_audio_tool",
+    "project_audio_tool_dirs",
+    "resolve_audio_tool",
 ]

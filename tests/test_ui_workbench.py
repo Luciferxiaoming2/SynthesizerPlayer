@@ -1,4 +1,4 @@
-from ui.main_window import WorkbenchBridge
+from ui.main_window import WorkbenchBridge, resolve_demucs_python
 from core_engine.player.sounddevice_output import AudioOutputDevice
 
 
@@ -105,7 +105,8 @@ def test_workbench_bridge_imports_complete_song(tmp_path):
     assert "projects" in bridge.vocalPath
     assert bridge.vocalPath.endswith("vocal.wav")
     assert bridge.instrumentalPath.endswith("instrumental.wav")
-    assert "Playback loaded" in bridge.status
+    assert "Imported song project" in bridge.status
+    assert "separator=preview" in bridge.status
 
 
 def test_workbench_bridge_imports_with_selected_backends(tmp_path):
@@ -119,3 +120,39 @@ def test_workbench_bridge_imports_with_selected_backends(tmp_path):
     assert bridge.separatorBackend == "preview"
     assert bridge.lyricsBackend == "none"
     assert bridge.vocalPath.endswith("vocal.wav")
+    assert "separator=preview" in bridge.status
+
+
+def test_workbench_bridge_reports_busy_import_guard(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge._set_import_busy(True)
+
+    bridge.importSongWithBackendsAsync((tmp_path / "song.wav").as_uri(), "preview", "none")
+
+    assert bridge.importBusy is True
+    assert bridge.status == "Import already running"
+
+
+def test_resolve_demucs_python_prefers_configured_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUDIO_FORGE_DEMUCS_PYTHON", "D:/tools/python.exe")
+
+    assert resolve_demucs_python(tmp_path) == "D:/tools/python.exe"
+
+
+def test_resolve_demucs_python_uses_sidecar_python(tmp_path, monkeypatch):
+    monkeypatch.delenv("AUDIO_FORGE_DEMUCS_PYTHON", raising=False)
+    sidecar = tmp_path / "plugins" / "models" / "python" / "python.exe"
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("fake", encoding="utf-8")
+
+    assert resolve_demucs_python(tmp_path) == str(sidecar)
+
+
+def test_demucs_runner_script_finds_pyinstaller_internal_data(tmp_path):
+    runner = tmp_path / "_internal" / "core_engine" / "player" / "demucs_soundfile_runner.py"
+    runner.parent.mkdir(parents=True)
+    runner.write_text("fake", encoding="utf-8")
+
+    from ui.main_window import demucs_runner_script
+
+    assert demucs_runner_script(tmp_path) == runner

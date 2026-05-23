@@ -1,8 +1,4 @@
-"""Optional ffmpeg/rubberband command adapters.
-
-The legacy project bundled binaries. This project keeps the capability but
-expects tools to be installed externally or configured by path.
-"""
+"""Optional ffmpeg/rubberband command adapters."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,15 +11,50 @@ class AudioToolAvailability:
     executable: str
     available: bool
     resolved_path: str | None
+    source: str = "missing"
 
 
-def detect_audio_tool(executable: str) -> AudioToolAvailability:
+def detect_audio_tool(
+    executable: str,
+    search_dirs: list[Path] | tuple[Path, ...] | None = None,
+) -> AudioToolAvailability:
+    for directory in search_dirs or ():
+        candidate = directory / executable
+        if candidate.exists():
+            return AudioToolAvailability(executable, True, str(candidate), "local")
+        if not executable.lower().endswith(".exe"):
+            windows_candidate = directory / f"{executable}.exe"
+            if windows_candidate.exists():
+                return AudioToolAvailability(executable, True, str(windows_candidate), "local")
+
     resolved = shutil.which(executable)
     return AudioToolAvailability(
         executable=executable,
         available=resolved is not None,
         resolved_path=resolved,
+        source="path" if resolved is not None else "missing",
     )
+
+
+def project_audio_tool_dirs(root: Path) -> list[Path]:
+    """Return local tool directories in preferred order.
+
+    The migrated app prefers tools placed under plugins/models, but also reuses
+    the legacy source folder when it is present locally.
+    """
+
+    return [
+        root / "plugins" / "models" / "ffmpeg",
+        root / "源代码" / "Synthesizer Player" / "Synthesizer Player" / "ffmpeg" / "bin",
+    ]
+
+
+def resolve_audio_tool(executable: str, root: Path | None = None) -> str:
+    search_dirs = project_audio_tool_dirs(root) if root is not None else None
+    result = detect_audio_tool(executable, search_dirs=search_dirs)
+    if not result.available or result.resolved_path is None:
+        raise FileNotFoundError(f"{executable} not found")
+    return result.resolved_path
 
 
 @dataclass(frozen=True)
@@ -50,6 +81,9 @@ class FfmpegAudioStandardizer:
         return [
             self._config.executable,
             "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
             "-i",
             str(source_path),
             "-ar",
