@@ -324,7 +324,7 @@ ApplicationWindow {
                         Text {
                             anchors.centerIn: parent
                             visible: !root.bridge || root.bridge.lyricLines.length === 0
-                            text: "暂无歌词：可导入 .lrc/.srt，或导入歌曲时选择 preview/faster-whisper 歌词后端"
+                            text: "纯音乐或暂无歌词：可导入同名 .lrc/.srt，或选择 faster-whisper 识别原始语言歌词"
                             color: root.textMuted
                             font.pixelSize: 18
                             width: parent.width * 0.86

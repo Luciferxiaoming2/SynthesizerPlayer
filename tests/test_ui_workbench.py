@@ -106,6 +106,26 @@ def test_workbench_bridge_scans_and_loads_song_folder(tmp_path):
     assert "音频已加载" in bridge.status
 
 
+def test_workbench_bridge_preserves_english_sidecar_lyrics(tmp_path):
+    songs_root = tmp_path / "songs"
+    songs_root.mkdir()
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+    complete_song = songs_root / "english_song.wav"
+    complete_song.write_bytes((tmp_path / "harness" / "mock_data" / "vocal.wav").read_bytes())
+    complete_song.with_suffix(".lrc").write_text(
+        "[00:00.000]Hello from the other side\n[00:01.000]I must have called a thousand times",
+        encoding="utf-8",
+    )
+
+    bridge.importSongWithBackends(complete_song.as_uri(), "preview", "preview")
+
+    assert bridge.lyricLines == [
+        "Hello from the other side",
+        "I must have called a thousand times",
+    ]
+
+
 def test_workbench_bridge_scans_plain_music_folder(tmp_path):
     music = tmp_path / "music"
     music.mkdir()

@@ -33,8 +33,8 @@ class PreviewLyricsTranscriber(LyricsTranscriber):
         request.output_path.write_text(
             "\n".join(
                 [
-                    "[00:00.000]暂无真实歌词，请导入同名 .lrc/.srt",
-                    f"[{format_lrc_timestamp(midpoint_ms)}]也可以选择 faster-whisper 生成初始歌词",
+                    "[00:00.000]未找到歌词文件",
+                    f"[{format_lrc_timestamp(midpoint_ms)}]请导入 .lrc/.srt，或使用 faster-whisper 识别原始语言歌词",
                 ]
             ),
             encoding="utf-8",

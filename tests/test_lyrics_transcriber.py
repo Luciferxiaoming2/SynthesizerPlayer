@@ -23,6 +23,7 @@ def test_preview_lyrics_transcriber_writes_lrc(tmp_path):
     assert result == output_path
     assert "[00:00.000]" in text
     assert "[00:01.000]" in text
+    assert "未找到歌词文件" in text
 
 
 def test_faster_whisper_transcriber_reports_missing_optional_dependency(tmp_path):
