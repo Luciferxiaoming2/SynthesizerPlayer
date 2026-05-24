@@ -57,6 +57,22 @@ def test_workbench_bridge_applies_tone_deaf_to_loaded_playback(tmp_path):
     assert "已应用跑调强度" in bridge.status
 
 
+def test_workbench_bridge_applies_tone_deaf_without_interrupting_playback(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+
+    bridge.generateMockAudio()
+    bridge.play()
+    playback = bridge._playback
+    playback.seek_frames(1000)
+
+    bridge.setToneDeafRatio(0.8)
+
+    assert bridge._playback is playback
+    assert bridge.isPlaying
+    assert bridge._playback.position_frames == 1000
+    assert "实时应用跑调强度" in bridge.status
+
+
 def test_workbench_bridge_toggles_track_mutes(tmp_path):
     bridge = WorkbenchBridge(tmp_path)
     bridge.generateMockAudio()

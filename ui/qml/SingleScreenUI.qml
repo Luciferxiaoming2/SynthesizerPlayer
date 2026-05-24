@@ -664,7 +664,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: "使用提示：跑调强度会影响播放和导出；拖动后会重新处理当前人声，长歌曲可能需要等几秒。要自动歌词，请先选歌词方式再点“生成歌词”。"
+                    text: "使用提示：播放中拖动跑调强度会立刻换成新效果，长歌曲可能需要等几秒。要自动歌词，请先选歌词方式再点“生成歌词”。"
                     color: root.textMuted
                     font.pixelSize: 12
                     elide: Text.ElideRight

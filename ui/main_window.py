@@ -416,18 +416,16 @@ class WorkbenchBridge(QObject):
             self.playbackChanged.emit()
             return
 
-        was_playing = self._playback.is_playing
-        position = self._playback.position_frames
-        controls = self._playback.controls
         try:
-            self._stop_audio_output(reset_engine=False)
             buffers = self._build_playback_buffers()
-            self._playback = DualTrackPlaybackEngine(buffers, controls)
-            self._playback.seek_frames(position)
-            if was_playing:
-                self._playback.play()
+            self._playback.replace_buffers(buffers, keep_position=True)
             self.playbackChanged.emit()
-            self._set_status(f"已应用跑调强度：{round(self._tone_deaf_ratio * 100)}%")
+            if self._playback.is_playing:
+                self._set_status(
+                    f"已实时应用跑调强度：{round(self._tone_deaf_ratio * 100)}%，播放会继续"
+                )
+            else:
+                self._set_status(f"已应用跑调强度：{round(self._tone_deaf_ratio * 100)}%")
         except Exception:
             self._set_status(f"跑调处理失败：{traceback.format_exc(limit=1).strip()}")
 
