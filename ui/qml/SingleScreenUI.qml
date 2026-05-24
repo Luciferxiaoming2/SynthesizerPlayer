@@ -868,7 +868,8 @@ ApplicationWindow {
                         Layout.fillWidth: true
                     }
                     SecondaryButton {
-                        text: "生成歌词"
+                        text: root.bridge && root.bridge.lyricsGenerationBusy ? "生成中" : "生成歌词"
+                        enabled: !(root.bridge && root.bridge.lyricsGenerationBusy)
                         Layout.preferredWidth: 112
                         Layout.preferredHeight: 36
                         onClicked: if (root.bridge) root.bridge.generateSmartLyrics()
@@ -897,6 +898,43 @@ ApplicationWindow {
                     color: "#151720"
                 }
 
+                Rectangle {
+                    visible: root.bridge && root.bridge.lyricsGenerationBusy
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible ? 54 : 0
+                    radius: 10
+                    color: "#111520"
+                    border.color: "#293146"
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 16
+                        anchors.rightMargin: 16
+                        spacing: 12
+                        Text {
+                            text: root.bridge ? root.bridge.lyricsGenerationStatus : "正在生成歌词"
+                            color: root.textMain
+                            font.pixelSize: 14
+                            Layout.preferredWidth: 190
+                            elide: Text.ElideRight
+                        }
+                        ProgressBar {
+                            from: 0
+                            to: 100
+                            value: root.bridge ? root.bridge.lyricsGenerationProgress : 0
+                            indeterminate: root.bridge && root.bridge.lyricsGenerationBusy && root.bridge.lyricsGenerationProgress < 90
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            text: root.bridge ? (root.bridge.lyricsGenerationProgress + "%") : "0%"
+                            color: root.accent2
+                            font.pixelSize: 13
+                            font.bold: true
+                            Layout.preferredWidth: 46
+                            horizontalAlignment: Text.AlignRight
+                        }
+                    }
+                }
+
                 Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
@@ -912,6 +950,10 @@ ApplicationWindow {
                         highlightRangeMode: ListView.StrictlyEnforceRange
                         boundsBehavior: Flickable.StopAtBounds
                         spacing: 36
+                        onCurrentIndexChanged: {
+                            if (currentIndex >= 0)
+                                positionViewAtIndex(currentIndex, ListView.Center)
+                        }
 
                         delegate: Rectangle {
                             property bool active: ListView.isCurrentItem

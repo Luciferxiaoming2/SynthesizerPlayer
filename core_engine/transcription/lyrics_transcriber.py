@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
+import unicodedata
 from collections.abc import Sequence
 
 from core_engine.player.sync_buffer import read_audio
@@ -99,11 +100,12 @@ class FasterWhisperLyricsTranscriber(LyricsTranscriber):
             str(request.audio_path),
             language=self._config.language,
             beam_size=self._config.beam_size,
+            initial_prompt="输出歌词请使用简体中文或英文，不要使用繁体中文。",
         )
 
         lines = []
         for segment in segments:
-            text = segment.text.strip()
+            text = normalize_generated_lyric_text(segment.text)
             if not text:
                 continue
             start_ms = round(float(segment.start) * 1000.0)
@@ -119,3 +121,68 @@ def format_lrc_timestamp(position_ms: int) -> str:
     minutes, remainder = divmod(max(0, position_ms), 60_000)
     seconds, millis = divmod(remainder, 1_000)
     return f"{minutes:02d}:{seconds:02d}.{millis:03d}"
+
+
+TRADITIONAL_TO_SIMPLIFIED = str.maketrans(
+    {
+        "臺": "台",
+        "颱": "台",
+        "灣": "湾",
+        "萬": "万",
+        "與": "与",
+        "愛": "爱",
+        "聽": "听",
+        "說": "说",
+        "話": "话",
+        "夢": "梦",
+        "還": "还",
+        "這": "这",
+        "那": "那",
+        "裡": "里",
+        "裏": "里",
+        "為": "为",
+        "會": "会",
+        "來": "来",
+        "時": "时",
+        "間": "间",
+        "風": "风",
+        "雲": "云",
+        "過": "过",
+        "麼": "么",
+        "嗎": "吗",
+        "妳": "你",
+        "誰": "谁",
+        "開": "开",
+        "關": "关",
+        "讓": "让",
+        "後": "后",
+        "聲": "声",
+        "無": "无",
+        "沒": "没",
+        "離": "离",
+        "難": "难",
+        "歡": "欢",
+        "見": "见",
+        "長": "长",
+        "輕": "轻",
+        "重": "重",
+        "淚": "泪",
+        "從": "从",
+        "對": "对",
+        "錯": "错",
+        "點": "点",
+        "舊": "旧",
+        "終": "终",
+        "隻": "只",
+        "個": "个",
+        "們": "们",
+    }
+)
+
+
+def normalize_generated_lyric_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text).translate(TRADITIONAL_TO_SIMPLIFIED)
+    return "".join(
+        char for char in normalized.strip()
+        if char == "\t" or not unicodedata.category(char).startswith("C")
+    )

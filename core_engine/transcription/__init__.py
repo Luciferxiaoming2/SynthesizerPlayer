@@ -7,6 +7,7 @@ from core_engine.transcription.lyrics_transcriber import (
     LyricsTranscriptionRequest,
     LyricsTranscriber,
     PreviewLyricsTranscriber,
+    normalize_generated_lyric_text,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "LyricsTranscriptionRequest",
     "LyricsTranscriber",
     "PreviewLyricsTranscriber",
+    "normalize_generated_lyric_text",
 ]

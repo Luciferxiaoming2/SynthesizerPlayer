@@ -7,7 +7,7 @@ import os
 import sys
 import traceback
 
-from PyQt6.QtCore import QObject, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QCoreApplication, QObject, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQml import QQmlApplicationEngine
 
@@ -63,6 +63,31 @@ class ImportSongWorker(QObject):
             self.failed.emit(traceback.format_exc(limit=1).strip())
 
 
+class LyricsGenerationWorker(QObject):
+    progress = pyqtSignal(int, str)
+    finished = pyqtSignal(str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, transcriber, audio_path: Path, output_path: Path) -> None:
+        super().__init__()
+        self._transcriber = transcriber
+        self._audio_path = audio_path
+        self._output_path = output_path
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            self.progress.emit(15, "正在准备音频")
+            self.progress.emit(45, "正在识别歌词，界面可以继续操作")
+            path = self._transcriber.transcribe(
+                LyricsTranscriptionRequest(audio_path=self._audio_path, output_path=self._output_path)
+            )
+            self.progress.emit(90, "正在整理歌词时间轴")
+            self.finished.emit(str(path))
+        except Exception:
+            self.failed.emit(traceback.format_exc(limit=1).strip())
+
+
 class WorkbenchBridge(QObject):
     statusChanged = pyqtSignal()
     pathsChanged = pyqtSignal()
@@ -75,6 +100,7 @@ class WorkbenchBridge(QObject):
     importOptionsChanged = pyqtSignal()
     importBusyChanged = pyqtSignal()
     lyricsGenerationPromptRequested = pyqtSignal(str)
+    lyricsGenerationChanged = pyqtSignal()
 
     def __init__(self, root: Path) -> None:
         super().__init__()
@@ -98,6 +124,11 @@ class WorkbenchBridge(QObject):
         self._import_busy = False
         self._import_thread: QThread | None = None
         self._import_worker: ImportSongWorker | None = None
+        self._lyrics_generation_busy = False
+        self._lyrics_generation_progress = 0
+        self._lyrics_generation_status = ""
+        self._lyrics_thread: QThread | None = None
+        self._lyrics_worker: LyricsGenerationWorker | None = None
         self._playback: DualTrackPlaybackEngine | None = None
         self._audio_output: SoundDeviceOutput | None = None
         self._audio_output_active = False
@@ -176,6 +207,18 @@ class WorkbenchBridge(QObject):
     @pyqtProperty(bool, notify=importBusyChanged)
     def importBusy(self) -> bool:
         return self._import_busy
+
+    @pyqtProperty(bool, notify=lyricsGenerationChanged)
+    def lyricsGenerationBusy(self) -> bool:
+        return self._lyrics_generation_busy
+
+    @pyqtProperty(int, notify=lyricsGenerationChanged)
+    def lyricsGenerationProgress(self) -> int:
+        return self._lyrics_generation_progress
+
+    @pyqtProperty(str, notify=lyricsGenerationChanged)
+    def lyricsGenerationStatus(self) -> str:
+        return self._lyrics_generation_status
 
     @pyqtProperty(str, notify=pathsChanged)
     def vocalPath(self) -> str:
@@ -568,6 +611,9 @@ class WorkbenchBridge(QObject):
 
     @pyqtSlot()
     def generateLyrics(self) -> None:
+        if self._lyrics_generation_busy:
+            self._set_status("歌词正在生成中，请稍等。")
+            return
         if self._lyrics_backend == "none":
             self._set_status("当前歌词方式是“不生成歌词”。请先切换为“占位提示”或“本地识别”。")
             return
@@ -583,25 +629,21 @@ class WorkbenchBridge(QObject):
             self._set_status("请先导入或加载一首歌曲，再生成歌词。")
             return
 
-        output_path = self._lyrics_output_path()
         try:
-            self._set_status(f"正在生成歌词：{lyrics_backend_label(self._lyrics_backend)}")
             transcriber = self._build_lyrics_transcriber(self._lyrics_backend)
             if transcriber is None:
                 self._set_status("当前设置为不生成歌词，请先切换歌词方式。")
                 return
-            self._lyrics_path = transcriber.transcribe(
-                LyricsTranscriptionRequest(audio_path=audio_path, output_path=output_path)
-            )
-            timeline = load_lyrics_timeline(self._lyrics_path)
-            self._lyrics_sync = LyricPlaybackSynchronizer(timeline)
-            self._lyric_lines = timeline.texts()
-            self._update_lyrics()
-            self.pathsChanged.emit()
-            self._emit_lyrics_reloaded()
-            self._set_status(
-                f"歌词已生成：{self._lyrics_path}。{lyrics_backend_status_text(self._lyrics_backend)}"
-            )
+            if QCoreApplication.instance() is None:
+                self._lyrics_path = transcriber.transcribe(
+                    LyricsTranscriptionRequest(audio_path=audio_path, output_path=self._lyrics_output_path())
+                )
+                self._reload_lyrics_after_generation()
+                self._set_status(
+                    f"歌词已生成：{self._lyrics_path}。{lyrics_backend_status_text(self._lyrics_backend)}"
+                )
+                return
+            self._start_lyrics_generation(transcriber, audio_path, self._lyrics_output_path())
         except Exception:
             self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
 
@@ -611,6 +653,68 @@ class WorkbenchBridge(QObject):
             self._lyrics_backend = "faster-whisper"
             self.importOptionsChanged.emit()
         self.generateLyrics()
+
+    @pyqtSlot(int, str)
+    def _handle_lyrics_progress(self, progress: int, message: str) -> None:
+        self._lyrics_generation_progress = max(0, min(100, int(progress)))
+        self._lyrics_generation_status = message
+        self.lyricsGenerationChanged.emit()
+        self._set_status(message)
+
+    @pyqtSlot(str)
+    def _handle_lyrics_finished(self, path: str) -> None:
+        self._lyrics_path = Path(path)
+        self._reload_lyrics_after_generation()
+        self._lyrics_generation_progress = 100
+        self._lyrics_generation_status = "歌词生成完成"
+        self._set_lyrics_generation_busy(False)
+        self._set_status(
+            f"歌词已生成：{self._lyrics_path}。{lyrics_backend_status_text(self._lyrics_backend)}"
+        )
+
+    def _reload_lyrics_after_generation(self) -> None:
+        timeline = load_lyrics_timeline(self._lyrics_path)
+        self._lyrics_sync = LyricPlaybackSynchronizer(timeline)
+        self._lyric_lines = timeline.texts()
+        self.pathsChanged.emit()
+        self._emit_lyrics_reloaded()
+        self._update_lyrics()
+
+    @pyqtSlot(str)
+    def _handle_lyrics_failed(self, message: str) -> None:
+        self._lyrics_generation_status = "歌词生成失败"
+        self._set_lyrics_generation_busy(False)
+        self._set_status(format_user_error(message))
+
+    @pyqtSlot()
+    def _cleanup_lyrics_thread(self) -> None:
+        if self._lyrics_thread is not None:
+            self._lyrics_thread.deleteLater()
+        self._lyrics_thread = None
+        self._lyrics_worker = None
+
+    def _start_lyrics_generation(self, transcriber, audio_path: Path, output_path: Path) -> None:
+        self._lyrics_generation_progress = 5
+        self._lyrics_generation_status = f"正在生成歌词：{lyrics_backend_label(self._lyrics_backend)}"
+        self._set_lyrics_generation_busy(True)
+        self._set_status(self._lyrics_generation_status)
+
+        self._lyrics_thread = QThread(self)
+        self._lyrics_worker = LyricsGenerationWorker(transcriber, audio_path, output_path)
+        self._lyrics_worker.moveToThread(self._lyrics_thread)
+        self._lyrics_thread.started.connect(self._lyrics_worker.run)
+        self._lyrics_worker.progress.connect(self._handle_lyrics_progress)
+        self._lyrics_worker.finished.connect(self._handle_lyrics_finished)
+        self._lyrics_worker.failed.connect(self._handle_lyrics_failed)
+        self._lyrics_worker.finished.connect(self._lyrics_thread.quit)
+        self._lyrics_worker.failed.connect(self._lyrics_thread.quit)
+        self._lyrics_thread.finished.connect(self._lyrics_worker.deleteLater)
+        self._lyrics_thread.finished.connect(self._cleanup_lyrics_thread)
+        self._lyrics_thread.start()
+
+    def _set_lyrics_generation_busy(self, value: bool) -> None:
+        self._lyrics_generation_busy = value
+        self.lyricsGenerationChanged.emit()
 
     @pyqtSlot(str)
     def setSongsRootFromUrl(self, url: str) -> None:
