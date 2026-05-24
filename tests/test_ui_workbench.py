@@ -39,6 +39,7 @@ def test_workbench_bridge_playback_and_lyrics_state(tmp_path):
     assert bridge.playbackProgress > 0.0
     assert bridge.currentLyric
     assert bridge.lyricLines == ["样例前奏", "跑调预览", "可以导出"]
+    assert bridge.lyricTimeLabels == ["00:00", "00:00", "00:01"]
     assert bridge.currentLyricIndex >= 0
 
     bridge.seekProgress(0.8)

@@ -142,6 +142,7 @@ class WorkbenchBridge(QObject):
         self._audio_output_active = False
         self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]))
         self._lyric_lines: list[str] = []
+        self._lyric_time_labels: list[str] = []
         self._current_lyric_index = -1
         self._current_lyric = ""
         self._next_lyric = ""
@@ -331,6 +332,10 @@ class WorkbenchBridge(QObject):
     def lyricLines(self) -> list[str]:
         return list(self._lyric_lines)
 
+    @pyqtProperty("QStringList", notify=lyricLinesChanged)
+    def lyricTimeLabels(self) -> list[str]:
+        return list(self._lyric_time_labels)
+
     @pyqtProperty(int, notify=lyricPositionChanged)
     def currentLyricIndex(self) -> int:
         return self._current_lyric_index
@@ -418,7 +423,7 @@ class WorkbenchBridge(QObject):
             self._playback = DualTrackPlaybackEngine(buffers)
             timeline = load_lyrics_timeline(self._lyrics_path)
             self._lyrics_sync = LyricPlaybackSynchronizer(timeline, self._lyrics_offset_ms)
-            self._lyric_lines = timeline.texts()
+            self._set_lyric_timeline_view(timeline)
             self._emit_lyrics_reloaded()
             self._update_lyrics()
             self.playbackChanged.emit()
@@ -783,7 +788,7 @@ class WorkbenchBridge(QObject):
     def _reload_lyrics_after_generation(self) -> None:
         timeline = load_lyrics_timeline(self._lyrics_path)
         self._lyrics_sync = LyricPlaybackSynchronizer(timeline, self._lyrics_offset_ms)
-        self._lyric_lines = timeline.texts()
+        self._set_lyric_timeline_view(timeline)
         self.pathsChanged.emit()
         self._emit_lyrics_reloaded()
         self._update_lyrics()
@@ -868,7 +873,7 @@ class WorkbenchBridge(QObject):
             self._output_path = self._mock_dir / f"{sanitize_filename(session.asset.name)}_export.wav"
             timeline = load_lyrics_timeline(self._lyrics_path)
             self._lyrics_sync = LyricPlaybackSynchronizer(timeline, self._lyrics_offset_ms)
-            self._lyric_lines = timeline.texts()
+            self._set_lyric_timeline_view(timeline)
             self.pathsChanged.emit()
             self._emit_lyrics_reloaded()
             self.songsChanged.emit()
@@ -902,7 +907,7 @@ class WorkbenchBridge(QObject):
             self._current_song_index = -1
             self._playback = None
             self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]), self._lyrics_offset_ms)
-            self._lyric_lines = []
+            self._set_lyric_timeline_view(LyricTimeline([]))
             self._current_lyric = ""
             self._next_lyric = ""
             self._current_lyric_index = -1
@@ -918,7 +923,7 @@ class WorkbenchBridge(QObject):
         self._current_source_path = None
         self._playback = None
         self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]), self._lyrics_offset_ms)
-        self._lyric_lines = []
+        self._set_lyric_timeline_view(LyricTimeline([]))
         self._current_lyric = ""
         self._next_lyric = ""
         self._current_lyric_index = -1
@@ -1012,6 +1017,11 @@ class WorkbenchBridge(QObject):
         self.lyricPositionChanged.emit()
         self.lyricsChanged.emit()
 
+    def _set_lyric_timeline_view(self, timeline: LyricTimeline) -> None:
+        lines = timeline.lines
+        self._lyric_lines = [line.text for line in lines]
+        self._lyric_time_labels = [format_timestamp_ms(line.start_ms) for line in lines]
+
     def _stop_audio_output(self, reset_engine: bool) -> None:
         if self._audio_output is not None:
             try:
@@ -1063,8 +1073,8 @@ class WorkbenchBridge(QObject):
             self._lyrics_path = project.lyrics_path
         else:
             self._lyrics_path = project.project_dir / "lyrics.lrc"
-            self._lyric_lines = []
             self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]), self._lyrics_offset_ms)
+            self._set_lyric_timeline_view(LyricTimeline([]))
         self._output_path = project.project_dir / f"{project.name}_export.wav"
         self._current_song_key = song_key(project.asset)
         self._current_song_index = 0
@@ -1267,6 +1277,12 @@ def format_offset_ms(offset_ms: int) -> str:
     if seconds.is_integer():
         return f"{int(seconds)}s"
     return f"{seconds:.1f}s"
+
+
+def format_timestamp_ms(position_ms: int) -> str:
+    total_seconds = max(0, position_ms // 1000)
+    minutes, seconds = divmod(total_seconds, 60)
+    return f"{minutes:02d}:{seconds:02d}"
 
 
 def sanitize_filename(value: str) -> str:

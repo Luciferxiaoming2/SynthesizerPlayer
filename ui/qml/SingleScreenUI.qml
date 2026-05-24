@@ -1040,7 +1040,7 @@ ApplicationWindow {
                             property bool active: ListView.isCurrentItem
                             property bool sung: root.bridge && root.bridge.currentLyricIndex >= 0 && index < root.bridge.currentLyricIndex
 
-                            width: active ? Math.min(lyricList.width * 0.9, Math.max(240, lyricText.implicitWidth + 96)) : (sung ? Math.min(430, lyricList.width * 0.54) : Math.min(520, Math.max(220, lyricText.implicitWidth + 72)))
+                            width: active ? Math.min(lyricList.width * 0.92, Math.max(320, lyricText.implicitWidth + 164)) : (sung ? Math.min(430, lyricList.width * 0.54) : Math.min(520, Math.max(220, lyricText.implicitWidth + 72)))
                             height: active ? 86 : (sung ? 50 : 68)
                             x: (lyricList.width - width) / 2
                             radius: active ? 18 : 12
@@ -1048,30 +1048,11 @@ ApplicationWindow {
                             border.color: active ? "#6a2149" : "transparent"
                             opacity: sung && !active ? 0.68 : 1.0
 
-                            ColumnLayout {
+                            RowLayout {
                                 anchors.fill: parent
                                 anchors.leftMargin: active ? 24 : 4
-                                anchors.rightMargin: active ? 24 : 4
-                                anchors.topMargin: active ? 8 : 6
-                                anchors.bottomMargin: active ? 8 : 6
-                                spacing: active ? 6 : 8
-
-                                Rectangle {
-                                    Layout.preferredWidth: 62
-                                    Layout.preferredHeight: 28
-                                    radius: 6
-                                    color: "#171a24"
-                                    border.color: "#262a38"
-                                    visible: !sung || active
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "00:" + ("0" + Math.min(59, index * 5)).slice(-2)
-                                        color: root.accent2
-                                        font.pixelSize: 13
-                                        font.bold: true
-                                        font.family: "Consolas"
-                                    }
-                                }
+                                anchors.rightMargin: active ? 14 : 4
+                                spacing: active ? 14 : 8
 
                                 Text {
                                     id: lyricText
@@ -1081,6 +1062,26 @@ ApplicationWindow {
                                     font.bold: active || sung
                                     elide: Text.ElideRight
                                     Layout.fillWidth: true
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+
+                                Rectangle {
+                                    id: lyricTimeBadge
+                                    Layout.preferredWidth: 68
+                                    Layout.preferredHeight: 30
+                                    Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+                                    radius: 15
+                                    color: "#171a24"
+                                    border.color: active ? "#3d325f" : "#262a38"
+                                    visible: active
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: root.bridge && root.bridge.lyricTimeLabels.length > index ? root.bridge.lyricTimeLabels[index] : "--:--"
+                                        color: active ? "#d9d0ff" : root.accent2
+                                        font.pixelSize: 13
+                                        font.bold: true
+                                        font.family: "Consolas"
+                                    }
                                 }
                             }
                         }
