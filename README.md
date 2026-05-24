@@ -43,7 +43,7 @@ uv pip install -e ".[dev,dsp,package]"
 uv pip install -e ".[asr]"
 ```
 
-识别模型不提交仓库；交付便携包时放入 `plugins\models\faster-whisper\base`，打包脚本会自动随包带上。
+识别模型不提交仓库；交付便携包时优先放入 `plugins\models\faster-whisper\small`，打包脚本会自动随包带上。若只存在 `plugins\models\faster-whisper\base`，应用会回退使用 base 模型。
 
 ## 常用命令
 
@@ -116,7 +116,7 @@ D:\uv\venvs\audio_forge\Scripts\python.exe -m harness.cli_harness.import_song --
 ## 注意事项
 
 - 仓库只提交业务代码、测试和文档；音频文件、模型、打包结果、导入工程和 harness 规范文件都已放入 `.gitignore`。
-- 智能歌词识别的模型文件需要由交付人员放入 `plugins\models\faster-whisper\base` 后再打包。
+- 智能歌词识别默认使用 `plugins\models\faster-whisper\small`；缺少 small 时可回退 `plugins\models\faster-whisper\base`。
 - 当前“真人唱功/改词唱”仍是实验性适配层，不是完整商业模型效果。
 - “跑调强度”会影响播放和导出；长歌曲拖动滑杆后重新处理人声可能需要等待几秒。
 - VST 加载目前用于离线导出，不是实时播放链路。

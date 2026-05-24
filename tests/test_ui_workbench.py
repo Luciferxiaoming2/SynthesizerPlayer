@@ -419,6 +419,18 @@ def test_workbench_bridge_prefers_bundled_lyrics_model(tmp_path):
     assert bridge._local_lyrics_model_path() == model_dir
 
 
+def test_workbench_bridge_prefers_small_lyrics_model_over_base(tmp_path):
+    base_dir = tmp_path / "plugins" / "models" / "faster-whisper" / "base"
+    small_dir = tmp_path / "plugins" / "models" / "faster-whisper" / "small"
+    for model_dir in [base_dir, small_dir]:
+        model_dir.mkdir(parents=True)
+        (model_dir / "model.bin").write_bytes(b"fake")
+        (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    bridge = WorkbenchBridge(tmp_path)
+
+    assert bridge._local_lyrics_model_path() == small_dir
+
+
 def test_resolve_demucs_python_prefers_configured_env(tmp_path, monkeypatch):
     monkeypatch.setenv("AUDIO_FORGE_DEMUCS_PYTHON", "D:/tools/python.exe")
 

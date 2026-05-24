@@ -69,7 +69,7 @@ class ExternalCommandLyricsTranscriber(LyricsTranscriber):
 
 @dataclass(frozen=True)
 class FasterWhisperConfig:
-    model_size: str = "base"
+    model_size: str = "small"
     device: str = "cpu"
     compute_type: str = "int8"
     language: str | None = None

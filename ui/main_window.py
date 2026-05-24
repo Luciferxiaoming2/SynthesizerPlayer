@@ -1058,7 +1058,7 @@ class WorkbenchBridge(QObject):
         if backend == "faster-whisper":
             if not is_module_available("faster_whisper"):
                 raise RuntimeError("智能歌词识别组件未打包，无法生成歌词。")
-            model_size = str(self._local_lyrics_model_path() or "base")
+            model_size = str(self._local_lyrics_model_path() or "small")
             return FasterWhisperLyricsTranscriber(
                 FasterWhisperConfig(model_size=model_size, device="cpu", compute_type="int8")
             )
@@ -1068,12 +1068,10 @@ class WorkbenchBridge(QObject):
 
     def _local_lyrics_model_path(self) -> Path | None:
         candidates = [
+            self._root / "plugins" / "models" / "faster-whisper" / "small",
             self._root / "plugins" / "models" / "faster-whisper" / "base",
-            Path(getattr(sys, "_MEIPASS", self._root))
-            / "plugins"
-            / "models"
-            / "faster-whisper"
-            / "base",
+            Path(getattr(sys, "_MEIPASS", self._root)) / "plugins" / "models" / "faster-whisper" / "small",
+            Path(getattr(sys, "_MEIPASS", self._root)) / "plugins" / "models" / "faster-whisper" / "base",
         ]
         for candidate in candidates:
             if (candidate / "model.bin").exists() and (candidate / "config.json").exists():

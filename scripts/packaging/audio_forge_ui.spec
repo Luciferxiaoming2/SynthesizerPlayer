@@ -31,10 +31,11 @@ for package in [
     optional_binaries += binaries
     optional_hiddenimports += hiddenimports
 
-local_asr_model = ROOT / "plugins" / "models" / "faster-whisper" / "base"
 local_model_datas = []
-if (local_asr_model / "model.bin").exists():
-    local_model_datas.append((str(local_asr_model), "plugins/models/faster-whisper/base"))
+for model_name in ["small", "base"]:
+    local_asr_model = ROOT / "plugins" / "models" / "faster-whisper" / model_name
+    if (local_asr_model / "model.bin").exists():
+        local_model_datas.append((str(local_asr_model), f"plugins/models/faster-whisper/{model_name}"))
 
 
 a = Analysis(
