@@ -19,6 +19,34 @@ def test_scan_song_library_finds_dual_track_folder(tmp_path: Path):
     assert songs[0].is_imported_project
 
 
+def test_scan_song_library_uses_project_active_vocal(tmp_path: Path):
+    song_dir = tmp_path / "Song A"
+    stems_dir = song_dir / "stems"
+    ai_dir = song_dir / "ai_singer"
+    stems_dir.mkdir(parents=True)
+    ai_dir.mkdir()
+    vocal = stems_dir / "vocal.wav"
+    active_vocal = ai_dir / "rewrite.wav"
+    instrumental = stems_dir / "instrumental.wav"
+    vocal.write_bytes(b"old")
+    active_vocal.write_bytes(b"new")
+    instrumental.write_bytes(b"inst")
+    (song_dir / "lyrics.lrc").write_text("[00:00.00]hi", encoding="utf-8")
+    (song_dir / "project.json").write_text(
+        (
+            '{"vocal_path": "stems/vocal.wav", '
+            '"instrumental_path": "stems/instrumental.wav", '
+            '"active_vocal_path": "ai_singer/rewrite.wav"}'
+        ),
+        encoding="utf-8",
+    )
+
+    songs = scan_song_library(tmp_path)
+
+    assert len(songs) == 1
+    assert songs[0].vocal_path == active_vocal
+
+
 def test_scan_song_library_lists_plain_audio_files(tmp_path: Path):
     audio = tmp_path / "普通歌曲.m4a"
     lyric = tmp_path / "普通歌曲.lrc"

@@ -28,6 +28,9 @@ package = [
 asr = [
     "faster-whisper>=1.1",
 ]
+f0 = [
+    "aubio-ledfx>=0.4.11",
+]
 
 [project.scripts]
 audio-forge-ui = "ui.main_window:main"

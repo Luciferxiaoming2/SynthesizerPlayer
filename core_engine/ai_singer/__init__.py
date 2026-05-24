@@ -17,6 +17,11 @@ from core_engine.ai_singer.workflow import (
     LyricRewriteSingingResult,
     LyricRewriteSingingWorkflow,
 )
+from core_engine.ai_singer.backend_config import (
+    LyricRewriteBackendConfig,
+    load_lyric_rewrite_backend_config,
+    parse_lyric_rewrite_backend_config,
+)
 
 __all__ = [
     "BypassRvcInferencer",
@@ -26,8 +31,11 @@ __all__ = [
     "LyricRewriteSingingRequest",
     "LyricRewriteSingingResult",
     "LyricRewriteSingingWorkflow",
+    "LyricRewriteBackendConfig",
     "PreviewSingingClient",
     "RvcInferencer",
     "SingingSegmentRequest",
     "VoiceConversionRequest",
+    "load_lyric_rewrite_backend_config",
+    "parse_lyric_rewrite_backend_config",
 ]

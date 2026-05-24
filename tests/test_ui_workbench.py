@@ -1,10 +1,17 @@
+from pathlib import Path
+import json
+
 from ui.main_window import (
     WorkbenchBridge,
     format_user_error,
     lyrics_backend_label,
+    replace_lrc_line_text,
+    replace_srt_line_text,
     resolve_demucs_python,
     separator_backend_label,
+    update_project_active_vocal,
 )
+from core_engine.player.sync_buffer import read_audio
 from core_engine.player.sounddevice_output import AudioOutputDevice
 
 
@@ -28,6 +35,28 @@ def test_workbench_bridge_defaults_to_portable_import_library(tmp_path):
     assert bridge.separatorBackend == "demucs"
 
 
+def test_workbench_bridge_auto_loads_first_saved_song_on_startup(tmp_path):
+    setup_bridge = WorkbenchBridge(tmp_path)
+    setup_bridge.generateMockAudio()
+    song_dir = tmp_path / "save" / "Song A"
+    song_dir.mkdir(parents=True)
+    vocal = song_dir / "vocal.wav"
+    instrumental = song_dir / "instrumental.wav"
+    lyrics = song_dir / "lyrics.lrc"
+    vocal.write_bytes((tmp_path / "harness" / "mock_data" / "vocal.wav").read_bytes())
+    instrumental.write_bytes((tmp_path / "harness" / "mock_data" / "instrumental.wav").read_bytes())
+    lyrics.write_text("[00:00.000]Song lyric", encoding="utf-8")
+
+    bridge = WorkbenchBridge(tmp_path)
+
+    assert bridge.songNames == ["Song A"]
+    assert bridge.currentSongIndex == 0
+    assert bridge.vocalPath == str(vocal)
+    assert bridge.instrumentalPath == str(instrumental)
+    assert bridge.lyricsPath == str(lyrics)
+    assert bridge.playbackTime != "00:00 / 00:00"
+
+
 def test_workbench_bridge_playback_and_lyrics_state(tmp_path):
     bridge = WorkbenchBridge(tmp_path)
 
@@ -37,6 +66,9 @@ def test_workbench_bridge_playback_and_lyrics_state(tmp_path):
 
     assert bridge.isPlaying
     assert bridge.playbackProgress > 0.0
+    assert len(bridge.f0MonitorLevels) == 22
+    assert max(bridge.f0MonitorLevels) > min(bridge.f0MonitorLevels)
+    assert bridge.f0MonitorBackend in {"aubio F0", "音量波动"}
     assert bridge.currentLyric
     assert bridge.lyricLines == ["样例前奏", "跑调预览", "可以导出"]
     assert bridge.lyricTimeLabels == ["00:00", "00:00", "00:01"]
@@ -50,6 +82,66 @@ def test_workbench_bridge_playback_and_lyrics_state(tmp_path):
 
     bridge.stop()
     assert bridge.playbackProgress == 0.0
+
+
+def test_workbench_bridge_generates_lyric_rewrite_preview(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+    original_path = bridge.vocalPath
+
+    bridge.generateLyricRewrite(1, "新的歌词试听")
+
+    assert bridge.lyricRewritePreviewPath.endswith("vocal_rewrite_002.wav")
+    assert bridge.lyricRewriteManifestPath.endswith("vocal_rewrite_002.json")
+    assert Path(bridge.lyricRewriteManifestPath).exists()
+    assert (tmp_path / "harness" / "mock_data" / "lyrics.original.lrc").exists()
+    assert "新的歌词试听" in (tmp_path / "harness" / "mock_data" / "lyrics.lrc").read_text(encoding="utf-8")
+    assert "新的歌词试听" in bridge.lyricLines
+    assert bridge.vocalPath == bridge.lyricRewritePreviewPath
+    assert bridge.vocalPath != original_path
+    assert "改词唱预览已套用" in bridge.status
+    original_audio, _ = read_audio(Path(original_path))
+    rewrite_audio, _ = read_audio(Path(bridge.vocalPath))
+    assert original_audio.shape == rewrite_audio.shape
+    assert abs(original_audio - rewrite_audio).mean() > 0.0001
+
+    bridge.reloadOriginalVocal()
+
+    assert bridge.vocalPath == original_path
+    assert bridge.lyricRewritePreviewPath == ""
+    assert "跑调预览" in (tmp_path / "harness" / "mock_data" / "lyrics.lrc").read_text(encoding="utf-8")
+    assert "跑调预览" in bridge.lyricLines
+
+
+def test_replace_lrc_line_text_preserves_timestamps():
+    updated = replace_lrc_line_text("[00:00.000]old\n[00:01.000]next\n", 0, "new words")
+
+    assert updated == "[00:00.000]new words\n[00:01.000]next\n"
+
+
+def test_replace_srt_line_text_replaces_text_block():
+    updated = replace_srt_line_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nold words\n\n2\n00:00:01,000 --> 00:00:02,000\nnext",
+        1,
+        "new next",
+    )
+
+    assert "00:00:01,000 --> 00:00:02,000\nnew next" in updated
+    assert "old words" in updated
+
+
+def test_update_project_active_vocal_sets_and_clears_manifest(tmp_path):
+    manifest = tmp_path / "project.json"
+    manifest.write_text('{"vocal_path": "stems/vocal.wav"}', encoding="utf-8")
+    active = tmp_path / "ai_singer" / "rewrite.wav"
+
+    update_project_active_vocal(manifest, active)
+
+    assert json.loads(manifest.read_text(encoding="utf-8"))["active_vocal_path"] == str(active)
+
+    update_project_active_vocal(manifest, None)
+
+    assert "active_vocal_path" not in manifest.read_text(encoding="utf-8")
 
 
 def test_workbench_bridge_applies_lyrics_offset(tmp_path):

@@ -30,6 +30,7 @@ ApplicationWindow {
     property real designHeight: 920
     property real uiScale: Math.max(0.62, Math.min(1.35, Math.min(width / designWidth, height / designHeight)))
     property real tonePreviewValue: 0.4
+    property int rewriteLyricIndex: -1
 
     function modelIndex(model, value) {
         if (!model)
@@ -51,6 +52,40 @@ ApplicationWindow {
         if (!root.bridge || lyricsBackendPicker.currentIndex < 0)
             return "preview"
         return root.bridge.lyricsBackends[lyricsBackendPicker.currentIndex]
+    }
+
+    function htmlEscape(value) {
+        return String(value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+    }
+
+    function lyricProgressHtml(value, progress, active, sung) {
+        if (!active)
+            return htmlEscape(value)
+        var text = String(value || "")
+        var tokens = text.match(/[\u3400-\u9fff]|[A-Za-z0-9]+|[^A-Za-z0-9\u3400-\u9fff]/g) || []
+        var countable = 0
+        for (var i = 0; i < tokens.length; i++) {
+            if (/[\u3400-\u9fff]|[A-Za-z0-9]+/.test(tokens[i]))
+                countable += 1
+        }
+        var sungLimit = Math.floor(countable * Math.max(0, Math.min(1, progress || 0)))
+        var seen = 0
+        var html = ""
+        for (var j = 0; j < tokens.length; j++) {
+            var token = tokens[j]
+            var isCountable = /[\u3400-\u9fff]|[A-Za-z0-9]+/.test(token)
+            var isPast = isCountable && seen < sungLimit
+            if (isCountable)
+                seen += 1
+            html += isPast
+                ? "<span style='font-size:25px;color:#ff55ad;font-weight:800'>" + htmlEscape(token) + "</span>"
+                : "<span style='font-size:17px;color:#a97798;font-weight:700'>" + htmlEscape(token) + "</span>"
+        }
+        return html
     }
 
     Component.onCompleted: {
@@ -170,6 +205,116 @@ ApplicationWindow {
                         lyricsConfirmPopup.close()
                         if (root.bridge)
                             root.bridge.generateSmartLyrics()
+                    }
+                }
+            }
+        }
+    }
+
+    Popup {
+        id: rewritePopup
+        anchors.centerIn: parent
+        width: Math.min(parent.width * 0.62, 620)
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        padding: 0
+        property string originalLyric: ""
+
+        background: Rectangle {
+            radius: 10
+            color: "#10121b"
+            border.color: "#34384a"
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 22
+            spacing: 14
+
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    text: "实验版改词唱"
+                    color: root.textMain
+                    font.pixelSize: 20
+                    font.bold: true
+                    Layout.fillWidth: true
+                }
+                Text {
+                    text: root.rewriteLyricIndex >= 0 ? ("第 " + (root.rewriteLyricIndex + 1) + " 句") : "未选择"
+                    color: root.accent2
+                    font.pixelSize: 13
+                }
+            }
+            Text {
+                text: "原歌词：" + rewritePopup.originalLyric
+                color: root.textMuted
+                font.pixelSize: 13
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            TextArea {
+                id: rewriteText
+                placeholderText: "输入要改唱的新歌词"
+                text: rewritePopup.originalLyric
+                wrapMode: TextArea.Wrap
+                selectByMouse: true
+                Layout.fillWidth: true
+                Layout.preferredHeight: 108
+                color: root.textMain
+                background: Rectangle {
+                    radius: 8
+                    color: "#151722"
+                    border.color: "#303447"
+                }
+            }
+            ColumnLayout {
+                visible: root.bridge && root.bridge.lyricRewriteBusy
+                Layout.fillWidth: true
+                spacing: 6
+                Text {
+                    text: root.bridge ? root.bridge.lyricRewriteStatus : "正在生成改词唱"
+                    color: root.textMuted
+                    font.pixelSize: 12
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                ProgressBar {
+                    from: 0
+                    to: 100
+                    value: root.bridge ? root.bridge.lyricRewriteProgress : 0
+                    indeterminate: root.bridge && root.bridge.lyricRewriteBusy && root.bridge.lyricRewriteProgress < 95
+                    Layout.fillWidth: true
+                }
+            }
+            Text {
+                text: "当前先使用轻量 preview 合成验证流程；真实唱腔模型接入后会替换这里的合成后端。"
+                color: root.textDim
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                SecondaryButton {
+                    text: "恢复原唱"
+                    Layout.preferredWidth: 110
+                    onClicked: if (root.bridge) root.bridge.reloadOriginalVocal()
+                }
+                Item { Layout.fillWidth: true }
+                SecondaryButton {
+                    text: "取消"
+                    Layout.preferredWidth: 88
+                    onClicked: rewritePopup.close()
+                }
+                PrimaryButton {
+                    text: root.bridge && root.bridge.lyricRewriteBusy ? "生成中" : "生成试听"
+                    enabled: !(root.bridge && root.bridge.lyricRewriteBusy)
+                    Layout.preferredWidth: 120
+                    onClicked: {
+                        if (root.bridge)
+                            root.bridge.generateLyricRewrite(root.rewriteLyricIndex, rewriteText.text)
                     }
                 }
             }
@@ -444,9 +589,15 @@ ApplicationWindow {
                         }
                     }
                     SecondaryButton {
-                        text: "真人唱功：未接入"
-                        enabled: false
+                        text: root.bridge && root.bridge.lyricRewriteBusy ? "改词唱生成中" : "改词唱实验版"
+                        enabled: !(root.bridge && root.bridge.lyricRewriteBusy)
                         Layout.fillWidth: true
+                        onClicked: {
+                            root.rewriteLyricIndex = root.bridge ? root.bridge.currentLyricIndex : -1
+                            rewritePopup.originalLyric = root.bridge && root.bridge.currentLyric.length > 0 ? root.bridge.currentLyric : ""
+                            rewriteText.text = rewritePopup.originalLyric
+                            rewritePopup.open()
+                        }
                     }
                 }
             }
@@ -764,14 +915,18 @@ ApplicationWindow {
                             Layout.fillHeight: true
                             spacing: 8
                             Repeater {
-                                model: 22
+                                model: root.bridge ? root.bridge.f0MonitorLevels : []
                                 Rectangle {
                                     Layout.preferredWidth: 8
-                                    Layout.preferredHeight: 18 + ((index * 17) % 31) + (root.bridge ? root.bridge.toneDeafRatio * 10 : 0)
+                                    Layout.preferredHeight: 12 + modelData * 54 + (root.bridge ? root.bridge.toneDeafRatio * 6 : 0)
                                     radius: 4
                                     color: index % 5 === 0 ? "#ff7fc0" : "#f269ad"
-                                    opacity: 0.78 + (index % 3) * 0.08
+                                    opacity: 0.76 + Math.min(0.22, modelData * 0.22)
                                     Layout.alignment: Qt.AlignVCenter
+
+                                    Behavior on Layout.preferredHeight {
+                                        NumberAnimation { duration: 90; easing.type: Easing.OutCubic }
+                                    }
                                 }
                             }
                         }
@@ -1069,7 +1224,7 @@ ApplicationWindow {
                         preferredHighlightEnd: height * 0.58
                         highlightRangeMode: ListView.StrictlyEnforceRange
                         boundsBehavior: Flickable.StopAtBounds
-                        spacing: 36
+                        spacing: 24
                         onCurrentIndexChanged: {
                             if (currentIndex >= 0)
                                 positionViewAtIndex(currentIndex, ListView.Center)
@@ -1079,25 +1234,26 @@ ApplicationWindow {
                             property bool active: ListView.isCurrentItem
                             property bool sung: root.bridge && root.bridge.currentLyricIndex >= 0 && index < root.bridge.currentLyricIndex
 
-                            width: active ? Math.min(lyricList.width * 0.92, Math.max(320, lyricText.implicitWidth + 164)) : (sung ? Math.min(430, lyricList.width * 0.54) : Math.min(520, Math.max(220, lyricText.implicitWidth + 72)))
-                            height: active ? 86 : (sung ? 50 : 68)
+                            width: active ? Math.max(260, lyricList.width - 8) : (sung ? Math.min(430, lyricList.width * 0.54) : Math.min(520, Math.max(220, lyricText.implicitWidth + 72)))
+                            height: active ? 62 : (sung ? 44 : 58)
                             x: (lyricList.width - width) / 2
-                            radius: active ? 18 : 12
+                            radius: active ? 16 : 12
                             color: active ? "#2a0a1d" : "transparent"
                             border.color: active ? "#6a2149" : "transparent"
                             opacity: sung && !active ? 0.68 : 1.0
 
                             RowLayout {
                                 anchors.fill: parent
-                                anchors.leftMargin: active ? 24 : 4
-                                anchors.rightMargin: active ? 14 : 4
-                                spacing: active ? 14 : 8
+                                anchors.leftMargin: active ? 20 : 4
+                                anchors.rightMargin: active ? 18 : 4
+                                spacing: active ? 12 : 8
 
                                 Text {
                                     id: lyricText
-                                    text: modelData
+                                    text: root.lyricProgressHtml(modelData, root.bridge ? root.bridge.currentLyricProgress : 0, active, sung)
+                                    textFormat: active ? Text.RichText : Text.PlainText
                                     color: active ? root.accent2 : (sung ? "#948696" : root.textMain)
-                                    font.pixelSize: active ? 21 : (sung ? 15 : 20)
+                                    font.pixelSize: active ? 25 : (sung ? 15 : 20)
                                     font.bold: active || sung
                                     elide: Text.ElideRight
                                     Layout.fillWidth: true
@@ -1106,8 +1262,8 @@ ApplicationWindow {
 
                                 Rectangle {
                                     id: lyricTimeBadge
-                                    Layout.preferredWidth: 68
-                                    Layout.preferredHeight: 30
+                                    Layout.preferredWidth: 76
+                                    Layout.preferredHeight: 28
                                     Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
                                     radius: 15
                                     color: "#171a24"
@@ -1121,6 +1277,19 @@ ApplicationWindow {
                                         font.bold: true
                                         font.family: "Consolas"
                                     }
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                acceptedButtons: Qt.LeftButton
+                                onClicked: lyricList.currentIndex = index
+                                onDoubleClicked: {
+                                    lyricList.currentIndex = index
+                                    root.rewriteLyricIndex = index
+                                    rewritePopup.originalLyric = modelData
+                                    rewriteText.text = modelData
+                                    rewritePopup.open()
                                 }
                             }
                         }

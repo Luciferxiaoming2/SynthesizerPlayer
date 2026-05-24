@@ -4,6 +4,8 @@ from pathlib import Path
 import importlib.util
 import json
 import os
+import re
+import shutil
 import sys
 import traceback
 
@@ -11,6 +13,12 @@ from PyQt6.QtCore import QCoreApplication, QObject, QThread, QTimer, QUrl, pyqtP
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQml import QQmlApplicationEngine
 
+from core_engine.ai_singer import (
+    LyricRewriteBackendConfig,
+    LyricRewriteSingingRequest,
+    LyricRewriteSingingWorkflow,
+    load_lyric_rewrite_backend_config,
+)
 from core_engine.external_tools import (
     FfmpegAudioStandardizer,
     FfmpegConfig,
@@ -38,7 +46,7 @@ from core_engine.player.sounddevice_output import (
     SoundDeviceOutputConfig,
     list_output_devices,
 )
-from core_engine.player.sync_buffer import write_audio
+from core_engine.player.sync_buffer import read_audio, write_audio
 from core_engine.player.sync_buffer import load_stem_pair
 from core_engine.transcription import (
     FasterWhisperConfig,
@@ -101,6 +109,94 @@ class LyricsGenerationWorker(QObject):
             self.failed.emit(traceback.format_exc(limit=1).strip())
 
 
+class LyricRewriteWorker(QObject):
+    progress = pyqtSignal(int, str)
+    finished = pyqtSignal(str, str, int)
+    failed = pyqtSignal(str)
+
+    def __init__(
+        self,
+        lyric: str,
+        lyric_index: int,
+        start_ms: int,
+        end_ms: int,
+        vocal_path: Path,
+        output_path: Path,
+        backend_config: LyricRewriteBackendConfig,
+        manifest_path: Path,
+    ) -> None:
+        super().__init__()
+        self._lyric = lyric
+        self._lyric_index = lyric_index
+        self._start_ms = start_ms
+        self._end_ms = end_ms
+        self._vocal_path = vocal_path
+        self._output_path = output_path
+        self._backend_config = backend_config
+        self._manifest_path = manifest_path
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            self.progress.emit(10, "正在读取当前人声音轨")
+            vocal, sample_rate = read_audio(self._vocal_path)
+            start_frame = max(0, round(self._start_ms * sample_rate / 1000))
+            end_frame = max(start_frame + 1, round(self._end_ms * sample_rate / 1000))
+            end_frame = min(end_frame, vocal.shape[0])
+            if start_frame >= vocal.shape[0]:
+                raise ValueError("选中的歌词时间超出当前音频长度")
+
+            duration_seconds = max(0.2, (end_frame - start_frame) / sample_rate)
+            segment_path = self._output_path.with_name(f"{self._output_path.stem}.segment.wav")
+            self.progress.emit(35, "正在合成改词唱预览")
+            workflow = LyricRewriteSingingWorkflow(
+                self._backend_config.build_singer(),
+                self._backend_config.build_voice_converter(),
+            )
+            synthesized = workflow.run(
+                LyricRewriteSingingRequest(
+                    lyric=self._lyric,
+                    melody_path=self._vocal_path,
+                    output_path=segment_path,
+                    sample_rate=sample_rate,
+                    duration_seconds=duration_seconds,
+                    rvc_model_path=self._backend_config.rvc_model_path,
+                )
+            )
+
+            self.progress.emit(70, "正在替换选中歌词片段")
+            segment, segment_rate = read_audio(synthesized.output_path)
+            if segment_rate != sample_rate:
+                raise ValueError(f"改唱片段采样率不一致：{segment_rate} != {sample_rate}")
+            segment = fit_audio_segment(segment, end_frame - start_frame, vocal.shape[1])
+            output = vocal.copy()
+            output[start_frame:end_frame] = crossfade_replace(
+                output[start_frame:end_frame],
+                segment,
+                sample_rate,
+            )
+            self._output_path.parent.mkdir(parents=True, exist_ok=True)
+            write_audio(self._output_path, output, sample_rate)
+            write_lyric_rewrite_manifest(
+                self._manifest_path,
+                {
+                    "lyric": self._lyric,
+                    "lyric_index": self._lyric_index,
+                    "start_ms": self._start_ms,
+                    "end_ms": self._end_ms,
+                    "backend": self._backend_config.backend,
+                    "backend_label": self._backend_config.label,
+                    "preview_vocal_path": str(self._output_path),
+                    "segment_path": str(segment_path),
+                    "used_voice_conversion": synthesized.used_voice_conversion,
+                },
+            )
+            self.progress.emit(95, "正在准备试听")
+            self.finished.emit(str(self._output_path), self._lyric, self._lyric_index)
+        except Exception:
+            self.failed.emit(traceback.format_exc(limit=1).strip())
+
+
 class WorkbenchBridge(QObject):
     statusChanged = pyqtSignal()
     pathsChanged = pyqtSignal()
@@ -115,6 +211,7 @@ class WorkbenchBridge(QObject):
     importProgressChanged = pyqtSignal()
     lyricsGenerationPromptRequested = pyqtSignal(str)
     lyricsGenerationChanged = pyqtSignal()
+    lyricRewriteChanged = pyqtSignal()
 
     def __init__(self, root: Path) -> None:
         super().__init__()
@@ -147,6 +244,14 @@ class WorkbenchBridge(QObject):
         self._lyrics_generation_status = ""
         self._lyrics_thread: QThread | None = None
         self._lyrics_worker: LyricsGenerationWorker | None = None
+        self._lyric_rewrite_busy = False
+        self._lyric_rewrite_progress = 0
+        self._lyric_rewrite_status = "双击歌词可生成实验版改词唱预览"
+        self._lyric_rewrite_preview_path: Path | None = None
+        self._lyric_rewrite_manifest_path: Path | None = None
+        self._lyric_rewrite_original_vocal_path: Path | None = None
+        self._lyric_rewrite_thread: QThread | None = None
+        self._lyric_rewrite_worker: LyricRewriteWorker | None = None
         self._playback: DualTrackPlaybackEngine | None = None
         self._audio_output: SoundDeviceOutput | None = None
         self._audio_output_active = False
@@ -156,6 +261,7 @@ class WorkbenchBridge(QObject):
         self._current_lyric_index = -1
         self._current_lyric = ""
         self._next_lyric = ""
+        self._current_lyric_progress = 0.0
         self._lyrics_offset_ms = 0
         self._tone_deaf_ratio = 0.4
         self._last_alignment_latency_ms: float | None = None
@@ -166,6 +272,7 @@ class WorkbenchBridge(QObject):
         self._playback_timer.setInterval(100)
         self._playback_timer.timeout.connect(self.advancePlayback)
         self._songs = scan_song_library(self._songs_root)
+        self._load_first_song_if_needed()
 
     @pyqtProperty(str, notify=statusChanged)
     def status(self) -> str:
@@ -259,6 +366,36 @@ class WorkbenchBridge(QObject):
     @pyqtProperty(str, notify=lyricsGenerationChanged)
     def lyricsGenerationStatus(self) -> str:
         return self._lyrics_generation_status
+
+    @pyqtProperty(bool, notify=lyricRewriteChanged)
+    def lyricRewriteBusy(self) -> bool:
+        return self._lyric_rewrite_busy
+
+    @pyqtProperty(int, notify=lyricRewriteChanged)
+    def lyricRewriteProgress(self) -> int:
+        return self._lyric_rewrite_progress
+
+    @pyqtProperty(str, notify=lyricRewriteChanged)
+    def lyricRewriteStatus(self) -> str:
+        return self._lyric_rewrite_status
+
+    @pyqtProperty(str, notify=lyricRewriteChanged)
+    def lyricRewritePreviewPath(self) -> str:
+        return "" if self._lyric_rewrite_preview_path is None else str(self._lyric_rewrite_preview_path)
+
+    @pyqtProperty(str, notify=lyricRewriteChanged)
+    def lyricRewriteManifestPath(self) -> str:
+        return "" if self._lyric_rewrite_manifest_path is None else str(self._lyric_rewrite_manifest_path)
+
+    @pyqtProperty(str, notify=lyricRewriteChanged)
+    def lyricRewriteBackendStatus(self) -> str:
+        try:
+            config = load_lyric_rewrite_backend_config(self._root)
+        except Exception as exc:
+            return f"改词唱配置有误：{exc}"
+        if config.config_path is None:
+            return "改词唱后端：内置实验预览（无需模型）"
+        return f"改词唱后端：{config.label}（{config.config_path.name}）"
 
     @pyqtProperty(str, notify=pathsChanged)
     def vocalPath(self) -> str:
@@ -362,6 +499,10 @@ class WorkbenchBridge(QObject):
     def currentLyricIndex(self) -> int:
         return self._current_lyric_index
 
+    @pyqtProperty(float, notify=lyricPositionChanged)
+    def currentLyricProgress(self) -> float:
+        return self._current_lyric_progress
+
     @pyqtProperty(int, notify=lyricPositionChanged)
     def lyricsOffsetMs(self) -> int:
         return self._lyrics_offset_ms
@@ -395,6 +536,16 @@ class WorkbenchBridge(QObject):
         if self._tone_deaf_ratio < 0.7:
             return "明显跑调已应用"
         return "强跑调已应用，注意音量"
+
+    @pyqtProperty("QVariantList", notify=playbackChanged)
+    def f0MonitorLevels(self) -> list[float]:
+        if self._playback is None:
+            return default_monitor_levels()
+        return monitor_levels_from_playback(self._playback)
+
+    @pyqtProperty(str, notify=playbackChanged)
+    def f0MonitorBackend(self) -> str:
+        return "aubio F0" if is_module_available("aubio") else "音量波动"
 
     @pyqtProperty(str, notify=playbackChanged)
     def alignmentLatencyStatus(self) -> str:
@@ -856,6 +1007,218 @@ class WorkbenchBridge(QObject):
         self._lyrics_generation_busy = value
         self.lyricsGenerationChanged.emit()
 
+    @pyqtSlot(int, str)
+    def generateLyricRewrite(self, lyric_index: int, new_lyric: str) -> None:
+        if self._lyric_rewrite_busy:
+            self._set_status("改词唱正在生成中，请稍等。")
+            return
+        text = new_lyric.strip()
+        if not text:
+            self._set_status("请先输入要改唱的新歌词。")
+            return
+        timeline = load_lyrics_timeline(self._lyrics_path)
+        lines = timeline.lines
+        if lyric_index < 0 or lyric_index >= len(lines):
+            self._set_status("请先双击一行歌词，再生成改词唱。")
+            return
+        if not self._vocal_path.exists():
+            self._set_status("请先导入或加载歌曲，改词唱需要人声音轨。")
+            return
+
+        line = lines[lyric_index]
+        start_ms = max(0, line.start_ms)
+        if line.end_ms is not None:
+            end_ms = line.end_ms
+        elif lyric_index + 1 < len(lines):
+            end_ms = lines[lyric_index + 1].start_ms
+        else:
+            end_ms = start_ms + max(1200, min(5000, len(text) * 260))
+        if end_ms <= start_ms:
+            end_ms = start_ms + max(1200, min(5000, len(text) * 260))
+
+        try:
+            backend_config = load_lyric_rewrite_backend_config(self._root)
+        except Exception as exc:
+            self._set_status(f"改词唱配置有误：{exc}")
+            return
+
+        output_path = self._lyric_rewrite_output_path(lyric_index)
+        manifest_path = output_path.with_suffix(".json")
+        if QCoreApplication.instance() is None:
+            worker = LyricRewriteWorker(
+                text,
+                lyric_index,
+                start_ms,
+                end_ms,
+                self._vocal_path,
+                output_path,
+                backend_config,
+                manifest_path,
+            )
+            worker.progress.connect(self._handle_lyric_rewrite_progress)
+            worker.finished.connect(self._handle_lyric_rewrite_finished)
+            worker.failed.connect(self._handle_lyric_rewrite_failed)
+            worker.run()
+            return
+
+        self._lyric_rewrite_progress = 5
+        self._lyric_rewrite_status = "正在生成实验版改词唱预览"
+        self._set_lyric_rewrite_busy(True)
+        self._set_status(self._lyric_rewrite_status)
+        self._lyric_rewrite_thread = QThread(self)
+        self._lyric_rewrite_worker = LyricRewriteWorker(
+            text,
+            lyric_index,
+            start_ms,
+            end_ms,
+            self._vocal_path,
+            output_path,
+            backend_config,
+            manifest_path,
+        )
+        self._lyric_rewrite_worker.moveToThread(self._lyric_rewrite_thread)
+        self._lyric_rewrite_thread.started.connect(self._lyric_rewrite_worker.run)
+        self._lyric_rewrite_worker.progress.connect(self._handle_lyric_rewrite_progress)
+        self._lyric_rewrite_worker.finished.connect(self._handle_lyric_rewrite_finished)
+        self._lyric_rewrite_worker.failed.connect(self._handle_lyric_rewrite_failed)
+        self._lyric_rewrite_worker.finished.connect(self._lyric_rewrite_thread.quit)
+        self._lyric_rewrite_worker.failed.connect(self._lyric_rewrite_thread.quit)
+        self._lyric_rewrite_thread.finished.connect(self._lyric_rewrite_worker.deleteLater)
+        self._lyric_rewrite_thread.finished.connect(self._cleanup_lyric_rewrite_thread)
+        self._lyric_rewrite_thread.start()
+
+    @pyqtSlot()
+    def reloadOriginalVocal(self) -> None:
+        restored_lyrics = self._restore_original_lyrics()
+        if self._lyric_rewrite_original_vocal_path is not None and self._lyric_rewrite_original_vocal_path.exists():
+            self._vocal_path = self._lyric_rewrite_original_vocal_path
+            self._set_project_active_vocal(None)
+            self._clear_lyric_rewrite_preview_state()
+            self.loadPlayback()
+            suffix = "，歌词也已恢复" if restored_lyrics else ""
+            self._set_status(f"已恢复改词唱前的人声音轨{suffix}")
+            return
+        if restored_lyrics and not (0 <= self._current_song_index < len(self._songs)):
+            self._clear_lyric_rewrite_preview_state()
+            self._reload_lyrics_after_generation()
+            self._set_status("已恢复原歌词")
+            return
+        if self._current_song_index >= 0 and self._current_song_index < len(self._songs):
+            self._set_project_active_vocal(None)
+            self._clear_lyric_rewrite_preview_state()
+            self.loadSongAt(self._current_song_index)
+            self._set_status("已恢复当前歌曲的原始人声音轨")
+            return
+        self._set_status("当前没有可恢复的歌曲工程。")
+
+    @pyqtSlot(int, str)
+    def _handle_lyric_rewrite_progress(self, progress: int, message: str) -> None:
+        self._lyric_rewrite_progress = max(0, min(100, int(progress)))
+        self._lyric_rewrite_status = message
+        self.lyricRewriteChanged.emit()
+        self._set_status(message)
+
+    @pyqtSlot(str, str, int)
+    def _handle_lyric_rewrite_finished(self, path: str, lyric: str, lyric_index: int) -> None:
+        self._lyric_rewrite_preview_path = Path(path)
+        self._lyric_rewrite_manifest_path = self._lyric_rewrite_preview_path.with_suffix(".json")
+        if self._lyric_rewrite_original_vocal_path is None:
+            self._lyric_rewrite_original_vocal_path = self._vocal_path
+        self._vocal_path = self._lyric_rewrite_preview_path
+        self._set_project_active_vocal(self._lyric_rewrite_preview_path)
+        self._lyric_rewrite_progress = 100
+        self._lyric_rewrite_status = f"改词唱预览已生成：{lyric}"
+        self._set_lyric_rewrite_busy(False)
+        self._apply_lyric_rewrite_text(lyric_index, lyric)
+        self.pathsChanged.emit()
+        self.loadPlayback()
+        self._set_status("改词唱预览已套用到当前人声，点击播放即可试听。真实模型后端后续可替换 preview。")
+
+    @pyqtSlot(str)
+    def _handle_lyric_rewrite_failed(self, message: str) -> None:
+        self._lyric_rewrite_status = "改词唱生成失败"
+        self._set_lyric_rewrite_busy(False)
+        self._set_status(format_user_error(message))
+
+    @pyqtSlot()
+    def _cleanup_lyric_rewrite_thread(self) -> None:
+        if self._lyric_rewrite_thread is not None:
+            self._lyric_rewrite_thread.deleteLater()
+        self._lyric_rewrite_thread = None
+        self._lyric_rewrite_worker = None
+
+    def _set_lyric_rewrite_busy(self, value: bool) -> None:
+        self._lyric_rewrite_busy = value
+        self.lyricRewriteChanged.emit()
+
+    def _clear_lyric_rewrite_preview_state(self) -> None:
+        self._lyric_rewrite_preview_path = None
+        self._lyric_rewrite_manifest_path = None
+        self._lyric_rewrite_original_vocal_path = None
+        self._lyric_rewrite_progress = 0
+        self._lyric_rewrite_status = "双击歌词可生成实验版改词唱预览"
+        self.lyricRewriteChanged.emit()
+
+    def _lyric_rewrite_output_path(self, lyric_index: int) -> Path:
+        base_dir = self._lyrics_path.parent if self._lyrics_path else self._projects_root
+        output_dir = base_dir / "ai_singer"
+        song_name = sanitize_filename(self._current_song_name())
+        return output_dir / f"{song_name}_rewrite_{lyric_index + 1:03d}.wav"
+
+    def _current_song_name(self) -> str:
+        if 0 <= self._current_song_index < len(self._songs):
+            return self._songs[self._current_song_index].name
+        if self._current_source_path is not None:
+            return self._current_source_path.stem
+        return "song"
+
+    def _apply_lyric_rewrite_text(self, lyric_index: int, lyric: str) -> None:
+        if not self._lyrics_path.exists():
+            return
+        try:
+            backup_lyrics_file_once(self._lyrics_path)
+            replace_timed_lyric_text(self._lyrics_path, lyric_index, lyric)
+            timeline = load_lyrics_timeline(self._lyrics_path)
+            self._lyrics_sync = LyricPlaybackSynchronizer(timeline, self._lyrics_offset_ms)
+            self._set_lyric_timeline_view(timeline)
+            self._emit_lyrics_reloaded()
+            self._update_lyrics()
+        except Exception as exc:
+            self._set_status(f"改词唱已生成，但歌词文件更新失败：{exc}")
+
+    def _restore_original_lyrics(self) -> bool:
+        if not self._lyrics_path.exists():
+            return False
+        backup_path = original_lyrics_backup_path(self._lyrics_path)
+        if not backup_path.exists():
+            return False
+        shutil.copyfile(backup_path, self._lyrics_path)
+        timeline = load_lyrics_timeline(self._lyrics_path)
+        self._lyrics_sync = LyricPlaybackSynchronizer(timeline, self._lyrics_offset_ms)
+        self._set_lyric_timeline_view(timeline)
+        self._emit_lyrics_reloaded()
+        self._update_lyrics()
+        return True
+
+    def _set_project_active_vocal(self, vocal_path: Path | None) -> None:
+        project_dir = self._project_dir_for_current_assets()
+        if project_dir is None:
+            return
+        update_project_active_vocal(project_dir / "project.json", vocal_path)
+
+    def _project_dir_for_current_assets(self) -> Path | None:
+        if self._lyrics_path and self._lyrics_path.parent.exists():
+            manifest_path = self._lyrics_path.parent / "project.json"
+            if manifest_path.exists():
+                return self._lyrics_path.parent
+        if self._vocal_path and self._vocal_path.parent.exists():
+            parent = self._vocal_path.parent
+            if (parent / "project.json").exists():
+                return parent
+            if parent.name == "stems" and (parent.parent / "project.json").exists():
+                return parent.parent
+        return None
+
     @pyqtSlot(str)
     def setSongsRootFromUrl(self, url: str) -> None:
         self._songs_root = Path(QUrl(url).toLocalFile())
@@ -867,11 +1230,22 @@ class WorkbenchBridge(QObject):
         try:
             self._songs = scan_song_library(self._songs_root)
             self.songsChanged.emit()
+            self._load_first_song_if_needed()
             self._set_status(f"已扫描到 {len(self._songs)} 首歌曲：{self._songs_root}")
         except Exception:
             self._songs = []
             self.songsChanged.emit()
             self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
+
+    def _load_first_song_if_needed(self) -> None:
+        if self._playback is not None or self._current_song_index >= 0:
+            return
+        if not self._songs:
+            return
+        first_song = self._songs[0]
+        if first_song.source_path is not None:
+            return
+        self.loadSongAt(0)
 
     @pyqtSlot(int)
     def loadSongAt(self, index: int) -> None:
@@ -938,6 +1312,7 @@ class WorkbenchBridge(QObject):
             self._current_lyric = ""
             self._next_lyric = ""
             self._current_lyric_index = -1
+            self._current_lyric_progress = 0.0
             self._emit_lyrics_reloaded()
             self.playbackChanged.emit()
 
@@ -954,6 +1329,7 @@ class WorkbenchBridge(QObject):
         self._current_lyric = ""
         self._next_lyric = ""
         self._current_lyric_index = -1
+        self._current_lyric_progress = 0.0
         self.songsChanged.emit()
         self._emit_lyrics_reloaded()
         self.playbackChanged.emit()
@@ -1027,15 +1403,18 @@ class WorkbenchBridge(QObject):
         current_index = -1 if state.current_index is None else state.current_index
         current_lyric = state.current_text or "..."
         next_lyric = "" if state.next_line is None else state.next_line.text
+        current_progress = round(max(0.0, min(1.0, state.line_progress)), 2)
         if (
             current_index == self._current_lyric_index
             and current_lyric == self._current_lyric
             and next_lyric == self._next_lyric
+            and current_progress == self._current_lyric_progress
         ):
             return
         self._current_lyric_index = current_index
         self._current_lyric = current_lyric
         self._next_lyric = next_lyric
+        self._current_lyric_progress = current_progress
         self.lyricPositionChanged.emit()
         self.lyricsChanged.emit()
 
@@ -1323,6 +1702,210 @@ def format_timestamp_ms(position_ms: int) -> str:
     total_seconds = max(0, position_ms // 1000)
     minutes, seconds = divmod(total_seconds, 60)
     return f"{minutes:02d}:{seconds:02d}"
+
+
+def default_monitor_levels(count: int = 22) -> list[float]:
+    return [0.22 + ((index * 7) % 11) / 40.0 for index in range(count)]
+
+
+def monitor_levels_from_playback(playback, count: int = 22) -> list[float]:
+    import numpy as np
+
+    buffers = playback.buffers
+    frame_count = buffers.frame_count
+    if frame_count <= 0:
+        return default_monitor_levels(count)
+
+    center = max(0, min(frame_count - 1, playback.position_frames))
+    window_frames = max(count, round(buffers.sample_rate * 0.55))
+    start = max(0, center - window_frames // 3)
+    end = min(frame_count, start + window_frames)
+    start = max(0, end - window_frames)
+    vocal = buffers.vocal[start:end]
+    if vocal.size == 0:
+        return default_monitor_levels(count)
+
+    mono_signal = np.mean(vocal, axis=1).astype(np.float32, copy=False)
+    pitch_levels = aubio_pitch_levels(mono_signal, buffers.sample_rate, count)
+    if pitch_levels is not None:
+        return pitch_levels
+
+    mono = np.abs(mono_signal)
+    chunks = np.array_split(mono, count)
+    rms = np.array([float(np.sqrt(np.mean(chunk * chunk))) if chunk.size else 0.0 for chunk in chunks])
+    peak = float(np.max(rms))
+    if peak <= 1e-6:
+        return [0.12 for _ in range(count)]
+    normalized = np.clip(rms / peak, 0.08, 1.0)
+    return [float(value) for value in normalized]
+
+
+def aubio_pitch_levels(audio, sample_rate: int, count: int) -> list[float] | None:
+    try:
+        import aubio
+        import numpy as np
+    except Exception:
+        return None
+
+    if audio.size == 0:
+        return None
+
+    hop_size = 1024
+    buffer_size = 2048
+    try:
+        detector = aubio.pitch("yinfft", buffer_size, hop_size, sample_rate)
+        detector.set_unit("Hz")
+        detector.set_silence(-48)
+    except Exception:
+        return None
+
+    chunks = np.array_split(audio, count)
+    pitches: list[float] = []
+    for chunk in chunks:
+        if chunk.size == 0:
+            pitches.append(0.0)
+            continue
+        if chunk.size < hop_size:
+            frame = np.pad(chunk, (0, hop_size - chunk.size))
+        else:
+            frame = chunk[:hop_size]
+        try:
+            pitch = float(detector(frame.astype(np.float32))[0])
+        except Exception:
+            return None
+        pitches.append(pitch if 45.0 <= pitch <= 1200.0 else 0.0)
+
+    valid = [pitch for pitch in pitches if pitch > 0.0]
+    if len(valid) < 2:
+        return None
+
+    min_hz = 70.0
+    max_hz = 700.0
+    levels = []
+    for pitch in pitches:
+        if pitch <= 0.0:
+            levels.append(0.08)
+            continue
+        normalized = (np.log2(min(max(pitch, min_hz), max_hz)) - np.log2(min_hz)) / (
+            np.log2(max_hz) - np.log2(min_hz)
+        )
+        levels.append(float(np.clip(0.12 + normalized * 0.88, 0.08, 1.0)))
+    return levels
+
+
+def fit_audio_segment(audio, frame_count: int, channel_count: int):
+    if audio.shape[1] != channel_count:
+        if audio.shape[1] == 1:
+            audio = audio.repeat(channel_count, axis=1)
+        elif channel_count == 1:
+            audio = audio.mean(axis=1, keepdims=True)
+        else:
+            audio = audio[:, :channel_count]
+    if audio.shape[0] > frame_count:
+        return audio[:frame_count].copy()
+    if audio.shape[0] == frame_count:
+        return audio.copy()
+    import numpy as np
+
+    padding = np.zeros((frame_count - audio.shape[0], channel_count), dtype=audio.dtype)
+    return np.concatenate([audio, padding], axis=0)
+
+
+def crossfade_replace(original, replacement, sample_rate: int):
+    import numpy as np
+
+    frame_count = min(original.shape[0], replacement.shape[0])
+    if frame_count <= 0:
+        return original
+    output = replacement[:frame_count].copy()
+    fade_frames = min(frame_count // 2, max(32, round(sample_rate * 0.025)))
+    if fade_frames > 1:
+        fade_in = np.linspace(0.0, 1.0, fade_frames, dtype=np.float32)[:, np.newaxis]
+        fade_out = np.linspace(1.0, 0.0, fade_frames, dtype=np.float32)[:, np.newaxis]
+        output[:fade_frames] = original[:fade_frames] * (1.0 - fade_in) + output[:fade_frames] * fade_in
+        output[-fade_frames:] = original[-fade_frames:] * (1.0 - fade_out) + output[-fade_frames:] * fade_out
+    return np.clip(output, -1.0, 1.0)
+
+
+def write_lyric_rewrite_manifest(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def update_project_active_vocal(manifest_path: Path, vocal_path: Path | None) -> None:
+    if not manifest_path.exists():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if vocal_path is None:
+        manifest.pop("active_vocal_path", None)
+    else:
+        manifest["active_vocal_path"] = str(vocal_path)
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def backup_lyrics_file_once(path: Path) -> Path:
+    backup_path = original_lyrics_backup_path(path)
+    if not backup_path.exists():
+        shutil.copyfile(path, backup_path)
+    return backup_path
+
+
+def original_lyrics_backup_path(path: Path) -> Path:
+    return path.with_name(f"{path.stem}.original{path.suffix}")
+
+
+def replace_timed_lyric_text(path: Path, lyric_index: int, new_text: str) -> None:
+    suffix = path.suffix.lower()
+    content = path.read_text(encoding="utf-8")
+    if suffix == ".lrc":
+        updated = replace_lrc_line_text(content, lyric_index, new_text)
+    elif suffix == ".srt":
+        updated = replace_srt_line_text(content, lyric_index, new_text)
+    else:
+        raise ValueError(f"暂不支持更新歌词格式：{path.suffix}")
+    path.write_text(updated, encoding="utf-8")
+
+
+def replace_lrc_line_text(content: str, lyric_index: int, new_text: str) -> str:
+    timed_index = -1
+    output: list[str] = []
+    pattern = re.compile(r"^(\[\d{1,2}:\d{2}(?:[.:]\d{1,3})?\])(.*)$")
+    for line in content.splitlines():
+        match = pattern.match(line.strip())
+        if match and match.group(2).strip():
+            timed_index += 1
+            if timed_index == lyric_index:
+                output.append(f"{match.group(1)}{new_text}")
+                continue
+        output.append(line)
+    if timed_index < lyric_index:
+        raise IndexError("歌词行不存在，无法写入改词")
+    return "\n".join(output) + ("\n" if content.endswith("\n") else "")
+
+
+def replace_srt_line_text(content: str, lyric_index: int, new_text: str) -> str:
+    blocks = re.split(r"(\r?\n\r?\n)", content)
+    timed_index = -1
+    for block_index in range(0, len(blocks), 2):
+        block = blocks[block_index]
+        parts = block.splitlines()
+        if not parts:
+            continue
+        time_line_index = 1 if parts[0].strip().isdigit() and len(parts) >= 2 else 0
+        if time_line_index >= len(parts) or "-->" not in parts[time_line_index]:
+            continue
+        timed_index += 1
+        if timed_index == lyric_index:
+            text_start = time_line_index + 1
+            blocks[block_index] = "\n".join(parts[:text_start] + [new_text])
+            return "".join(blocks)
+    raise IndexError("歌词行不存在，无法写入改词")
 
 
 def sanitize_filename(value: str) -> str:

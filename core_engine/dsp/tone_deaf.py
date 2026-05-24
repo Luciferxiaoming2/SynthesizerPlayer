@@ -15,6 +15,8 @@ class ToneDeafConfig:
     max_f0_hz: float = 900.0
     max_drift_cents: float = 420.0
     wobble_hz: float = 3.2
+    max_effect_mix: float = 0.68
+    timbre_crossover_hz: float = 2600.0
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.drift_ratio <= 1.0:
@@ -25,6 +27,10 @@ class ToneDeafConfig:
             raise ValueError("invalid F0 range")
         if self.max_drift_cents <= 0.0 or self.wobble_hz < 0.0:
             raise ValueError("invalid tone-deaf drift settings")
+        if not 0.0 <= self.max_effect_mix <= 1.0:
+            raise ValueError("max_effect_mix must be between 0.0 and 1.0")
+        if self.timbre_crossover_hz <= 0.0:
+            raise ValueError("timbre_crossover_hz must be positive")
 
 
 @dataclass(frozen=True)
@@ -48,9 +54,10 @@ def render_tone_deaf_vocal(
 ) -> np.ndarray:
     """Render an offline vocal buffer with human-like local pitch drift.
 
-    This lightweight fallback avoids a global pitch shift. It applies
-    deterministic, chunk-local resampling drift while preserving total length.
-    A future PyWorld backend can replace this function behind the same contract.
+    This lightweight fallback avoids replacing the full vocal with a shifted
+    signal. It keeps the original vocal as the dry anchor and blends in a
+    deterministic, chunk-local pitch-drift layer. The result is audibly out of
+    tune while keeping the singer's timbre close to the source.
     """
 
     audio = np.asarray(vocal, dtype=np.float32)
@@ -89,7 +96,8 @@ def render_tone_deaf_vocal(
         weights[start:end] += fade
 
     rendered = output / np.maximum(weights, 1.0)
-    return smooth_output_level(audio, rendered)
+    shifted_layer = smooth_output_level(audio, rendered)
+    return blend_with_timbre_anchor(audio, shifted_layer, sample_rate, config)
 
 
 def estimate_f0_track(
@@ -294,3 +302,42 @@ def smooth_output_level(source: np.ndarray, rendered: np.ndarray) -> np.ndarray:
         rendered = np.where(over, limited, rendered)
 
     return np.clip(rendered, -0.96, 0.96).astype(np.float32)
+
+
+def blend_with_timbre_anchor(
+    source: np.ndarray,
+    shifted_layer: np.ndarray,
+    sample_rate: int,
+    config: ToneDeafConfig,
+) -> np.ndarray:
+    """Blend an audible pitch-drift layer while keeping upper timbre stable."""
+
+    source = np.asarray(source, dtype=np.float32)
+    shifted_layer = np.asarray(shifted_layer, dtype=np.float32)
+    if config.drift_ratio <= 1e-6:
+        return source.copy()
+
+    shifted_low, _ = split_frequency_bands(shifted_layer, sample_rate, config.timbre_crossover_hz)
+    _, source_high = split_frequency_bands(source, sample_rate, config.timbre_crossover_hz)
+    shifted_tone = shifted_low + source_high
+
+    effect_mix = min(config.max_effect_mix, 0.18 + config.drift_ratio * 0.50)
+    rendered = source * (1.0 - effect_mix) + shifted_tone * effect_mix
+    return smooth_output_level(source, rendered)
+
+
+def split_frequency_bands(audio: np.ndarray, sample_rate: int, crossover_hz: float) -> tuple[np.ndarray, np.ndarray]:
+    array = np.asarray(audio, dtype=np.float32)
+    if array.shape[0] == 0:
+        return array.copy(), array.copy()
+    block_size = max(4096, min(65536, round(sample_rate * 1.5)))
+    low = np.zeros_like(array, dtype=np.float32)
+    for start in range(0, array.shape[0], block_size):
+        end = min(start + block_size, array.shape[0])
+        block = array[start:end]
+        frequencies = np.fft.rfftfreq(block.shape[0], d=1.0 / sample_rate)
+        low_mask = (frequencies <= crossover_hz).astype(np.float32)[:, np.newaxis]
+        spectrum = np.fft.rfft(block, axis=0)
+        low[start:end] = np.fft.irfft(spectrum * low_mask, n=block.shape[0], axis=0).astype(np.float32)
+    high = array - low
+    return low, high

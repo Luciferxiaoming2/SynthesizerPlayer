@@ -5,6 +5,7 @@ from core_engine.dsp.tone_deaf import (
     estimate_f0_track,
     generate_drift_curve,
     render_tone_deaf_vocal,
+    split_frequency_bands,
 )
 
 
@@ -38,6 +39,46 @@ def test_render_tone_deaf_vocal_controls_loud_source_peaks():
 
     assert rendered.shape == vocal.shape
     assert float(np.max(np.abs(rendered))) <= 0.96
+
+
+def test_render_tone_deaf_vocal_keeps_source_timbre_dominant():
+    sample_rate = 16_000
+    time = np.arange(sample_rate, dtype=np.float32) / sample_rate
+    vocal = (
+        0.18 * np.sin(2.0 * np.pi * 220.0 * time)
+        + 0.08 * np.sin(2.0 * np.pi * 440.0 * time)
+        + 0.04 * np.sin(2.0 * np.pi * 660.0 * time)
+    )[:, np.newaxis]
+
+    rendered = render_tone_deaf_vocal(
+        vocal,
+        sample_rate,
+        ToneDeafConfig(drift_ratio=1.0, random_seed=4),
+    )
+
+    _, vocal_high = split_frequency_bands(vocal, sample_rate, 2600.0)
+    _, rendered_high = split_frequency_bands(rendered, sample_rate, 2600.0)
+    high_correlation = float(np.corrcoef(vocal_high[:, 0], rendered_high[:, 0])[0, 1])
+    assert high_correlation > 0.80
+    assert float(np.mean(np.abs(rendered - vocal))) > 0.0001
+
+
+def test_render_tone_deaf_vocal_is_audible_at_high_strength():
+    sample_rate = 16_000
+    time = np.arange(sample_rate, dtype=np.float32) / sample_rate
+    vocal = (
+        0.18 * np.sin(2.0 * np.pi * 220.0 * time)
+        + 0.07 * np.sin(2.0 * np.pi * 440.0 * time)
+    )[:, np.newaxis]
+
+    rendered = render_tone_deaf_vocal(
+        vocal,
+        sample_rate,
+        ToneDeafConfig(drift_ratio=1.0, random_seed=5),
+    )
+
+    mean_delta = float(np.mean(np.abs(rendered - vocal)))
+    assert mean_delta > 0.01
 
 
 def test_estimate_f0_track_detects_sine_frequency():

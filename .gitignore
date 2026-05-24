@@ -20,6 +20,9 @@ htmlcov/
 .env
 .env.*
 !.env.example
+ai_singer_backend.json
+plugins/config/*.json
+!plugins/config/.gitkeep
 
 # Build and packaging outputs
 build/
