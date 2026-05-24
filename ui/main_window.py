@@ -51,6 +51,7 @@ from harness.cli_harness.generate_mock_audio import build_mock_stems
 
 
 class ImportSongWorker(QObject):
+    progress = pyqtSignal(int, str)
     finished = pyqtSignal(object, str, str)
     failed = pyqtSignal(str)
 
@@ -63,7 +64,13 @@ class ImportSongWorker(QObject):
     @pyqtSlot()
     def run(self) -> None:
         try:
+            self.progress.emit(10, "正在创建歌曲工程")
+            self.progress.emit(
+                35,
+                "正在分离人声和伴奏，真实分离可能需要几分钟，请不要关闭应用",
+            )
             project = import_single_song(self._config)
+            self.progress.emit(90, "正在加载分离结果")
             self.finished.emit(project, self._separator_backend, self._lyrics_backend)
         except Exception:
             self.failed.emit(traceback.format_exc(limit=1).strip())
@@ -105,6 +112,7 @@ class WorkbenchBridge(QObject):
     devicesChanged = pyqtSignal()
     importOptionsChanged = pyqtSignal()
     importBusyChanged = pyqtSignal()
+    importProgressChanged = pyqtSignal()
     lyricsGenerationPromptRequested = pyqtSignal(str)
     lyricsGenerationChanged = pyqtSignal()
 
@@ -130,6 +138,8 @@ class WorkbenchBridge(QObject):
         self._separator_backend = "demucs"
         self._lyrics_backend = "preview"
         self._import_busy = False
+        self._import_progress = 0
+        self._import_progress_status = ""
         self._import_thread: QThread | None = None
         self._import_worker: ImportSongWorker | None = None
         self._lyrics_generation_busy = False
@@ -225,6 +235,18 @@ class WorkbenchBridge(QObject):
     @pyqtProperty(bool, notify=importBusyChanged)
     def importBusy(self) -> bool:
         return self._import_busy
+
+    @pyqtProperty(int, notify=importProgressChanged)
+    def importProgress(self) -> int:
+        return self._import_progress
+
+    @pyqtProperty(str, notify=importProgressChanged)
+    def importProgressStatus(self) -> str:
+        return self._import_progress_status
+
+    @pyqtProperty(bool, notify=importProgressChanged)
+    def importProgressIndeterminate(self) -> bool:
+        return self._import_busy and self._separator_backend == "demucs" and self._import_progress < 90
 
     @pyqtProperty(bool, notify=lyricsGenerationChanged)
     def lyricsGenerationBusy(self) -> bool:
@@ -684,6 +706,10 @@ class WorkbenchBridge(QObject):
         self._lyrics_backend = lyrics_backend
         self.importOptionsChanged.emit()
         self._set_import_busy(True)
+        self._set_import_progress(
+            5,
+            f"正在导入歌曲：{separator_backend_label(separator_backend)}",
+        )
         self._set_status(
             "正在导入歌曲... "
             f"分离={separator_backend_label(separator_backend)}，"
@@ -698,6 +724,7 @@ class WorkbenchBridge(QObject):
         )
         self._import_worker.moveToThread(self._import_thread)
         self._import_thread.started.connect(self._import_worker.run)
+        self._import_worker.progress.connect(self._handle_import_progress)
         self._import_worker.finished.connect(self._handle_import_finished)
         self._import_worker.failed.connect(self._handle_import_failed)
         self._import_worker.finished.connect(self._import_thread.quit)
@@ -1168,11 +1195,18 @@ class WorkbenchBridge(QObject):
 
     @pyqtSlot(object, str, str)
     def _handle_import_finished(self, project, separator_backend: str, lyrics_backend: str) -> None:
+        self._set_import_progress(100, "导入完成")
         self._set_import_busy(False)
         self._apply_imported_project(project, separator_backend, lyrics_backend)
 
+    @pyqtSlot(int, str)
+    def _handle_import_progress(self, progress: int, message: str) -> None:
+        self._set_import_progress(progress, message)
+        self._set_status(message)
+
     @pyqtSlot(str)
     def _handle_import_failed(self, message: str) -> None:
+        self._set_import_progress(0, "导入失败")
         self._set_import_busy(False)
         self._set_status(format_user_error(message))
 
@@ -1188,6 +1222,12 @@ class WorkbenchBridge(QObject):
             return
         self._import_busy = value
         self.importBusyChanged.emit()
+        self.importProgressChanged.emit()
+
+    def _set_import_progress(self, progress: int, message: str) -> None:
+        self._import_progress = max(0, min(100, int(progress)))
+        self._import_progress_status = message
+        self.importProgressChanged.emit()
 
     def _upsert_song(self, asset: SongAsset) -> None:
         self._songs = [
@@ -1333,6 +1373,8 @@ def lyrics_backend_status_text(backend: str) -> str:
 
 
 def format_user_error(message: str) -> str:
+    if "Demucs 人声分离执行失败" in message:
+        return f"导入失败：真实人声分离执行失败。{short_error_detail(message)}"
     if "No module named demucs" in message or "demucs" in message and "No module named" in message:
         return "导入失败：真实人声分离组件不可用。请使用包含 Demucs 的完整环境，或在设置里临时切换为“快速预览（不消人声）”。"
     if "faster-whisper" in message or "faster_whisper" in message:
@@ -1348,6 +1390,13 @@ def format_user_error(message: str) -> str:
     if "CalledProcessError" in message:
         return "导入失败：外部工具执行失败，请换一首歌测试，或查看文件是否损坏。"
     return message
+
+
+def short_error_detail(message: str) -> str:
+    lines = [line.strip() for line in message.splitlines() if line.strip()]
+    if not lines:
+        return "请换一首歌测试，或检查文件是否损坏。"
+    return lines[-1][:220]
 
 
 def first_existing_dir(*candidates: Path) -> Path | None:

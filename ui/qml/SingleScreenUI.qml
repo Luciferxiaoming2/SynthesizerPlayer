@@ -269,12 +269,31 @@ ApplicationWindow {
                     spacing: 12
 
                     SettingsLabel { text: "导入与歌曲库" }
-                    PrimaryButton {
-                        text: root.bridge && root.bridge.importBusy ? "导入中" : "智能分轨导入歌曲"
-                        enabled: !(root.bridge && root.bridge.importBusy)
+                PrimaryButton {
+                    text: root.bridge && root.bridge.importBusy ? "导入中" : "智能分轨导入歌曲"
+                    enabled: !(root.bridge && root.bridge.importBusy)
+                    Layout.fillWidth: true
+                    onClicked: songImportDialog.open()
+                }
+                ColumnLayout {
+                    visible: root.bridge && root.bridge.importBusy
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Text {
+                        text: root.bridge ? root.bridge.importProgressStatus : "正在导入歌曲"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        elide: Text.ElideRight
                         Layout.fillWidth: true
-                        onClicked: songImportDialog.open()
                     }
+                    ProgressBar {
+                        from: 0
+                        to: 100
+                        value: root.bridge ? root.bridge.importProgress : 0
+                        indeterminate: root.bridge && root.bridge.importProgressIndeterminate
+                        Layout.fillWidth: true
+                    }
+                }
                     RowLayout {
                         Layout.fillWidth: true
                         SecondaryButton {
@@ -622,11 +641,31 @@ ApplicationWindow {
                 }
 
                 PrimaryButton {
-                        text: "+  真实分离导入歌曲"
+                    text: "+  真实分离导入歌曲"
                     enabled: !(root.bridge && root.bridge.importBusy)
                     Layout.fillWidth: true
                     Layout.preferredHeight: 56
                     onClicked: songImportDialog.open()
+                }
+
+                ColumnLayout {
+                    visible: root.bridge && root.bridge.importBusy
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Text {
+                        text: root.bridge ? root.bridge.importProgressStatus : "正在导入歌曲"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+                    ProgressBar {
+                        from: 0
+                        to: 100
+                        value: root.bridge ? root.bridge.importProgress : 0
+                        indeterminate: root.bridge && root.bridge.importProgressIndeterminate
+                        Layout.fillWidth: true
+                    }
                 }
 
                 RowLayout {

@@ -419,6 +419,26 @@ def test_workbench_bridge_reports_busy_import_guard(tmp_path):
     assert bridge.status == "歌曲正在导入中，请稍等"
 
 
+def test_workbench_bridge_reports_import_progress_state(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge._separator_backend = "demucs"
+
+    bridge._set_import_busy(True)
+    bridge._handle_import_progress(35, "正在分离人声和伴奏")
+
+    assert bridge.importBusy is True
+    assert bridge.importProgress == 35
+    assert bridge.importProgressStatus == "正在分离人声和伴奏"
+    assert bridge.importProgressIndeterminate is True
+
+
+def test_format_user_error_keeps_demucs_failure_detail():
+    message = "RuntimeError: Demucs 人声分离执行失败：CUDA out of memory"
+
+    assert "真实人声分离执行失败" in format_user_error(message)
+    assert "CUDA out of memory" in format_user_error(message)
+
+
 def test_workbench_bridge_builds_mp3_encoder_only_for_mp3(tmp_path, monkeypatch):
     bridge = WorkbenchBridge(tmp_path)
     fake_ffmpeg = tmp_path / "ffmpeg.exe"

@@ -101,7 +101,18 @@ class DemucsStemSeparator(StemSeparator):
 
         # Demucs 会输出到 <out>/<model>/<歌曲名>/vocals.wav 和 no_vocals.wav；
         # 这里统一搬运成项目内部固定命名，避免后续播放/导出层关心后端差异。
-        subprocess.run(self._command(source_path, work_dir), check=True, env=self._environment())
+        completed = subprocess.run(
+            self._command(source_path, work_dir),
+            env=self._environment(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if completed.returncode != 0:
+            detail = demucs_error_detail(completed.stdout, completed.stderr)
+            raise RuntimeError(f"Demucs 人声分离执行失败：{detail}")
         demucs_song_dir = work_dir / self._config.model_name / source_path.stem
         source_vocal = demucs_song_dir / "vocals.wav"
         source_instrumental = demucs_song_dir / "no_vocals.wav"
@@ -154,3 +165,9 @@ class DemucsStemSeparator(StemSeparator):
             existing_path = environment.get("PATH", "")
             environment["PATH"] = str(self._config.ffmpeg_dir) + os.pathsep + existing_path
         return environment
+
+
+def demucs_error_detail(stdout: str | None, stderr: str | None) -> str:
+    lines = [line.strip() for line in ((stderr or "") + "\n" + (stdout or "")).splitlines()]
+    detail_lines = [line for line in lines if line][-10:]
+    return " / ".join(detail_lines) if detail_lines else "外部进程没有返回错误详情"
