@@ -112,7 +112,7 @@ class WorkbenchBridge(QObject):
         super().__init__()
         self._root = root
         self._mock_dir = root / "harness" / "mock_data"
-        self._projects_root = root / "导入歌曲"
+        self._projects_root = root / "save"
         self._projects_root.mkdir(parents=True, exist_ok=True)
         self._songs_root = self._projects_root
         self._vocal_path = self._mock_dir / "vocal.wav"
@@ -127,7 +127,7 @@ class WorkbenchBridge(QObject):
         self._current_song_index = -1
         self._audio_devices: list[AudioOutputDevice] = []
         self._selected_audio_device_index = -1
-        self._separator_backend = "preview"
+        self._separator_backend = "demucs"
         self._lyrics_backend = "preview"
         self._import_busy = False
         self._import_thread: QThread | None = None
@@ -154,6 +154,7 @@ class WorkbenchBridge(QObject):
         self._playback_timer = QTimer(self)
         self._playback_timer.setInterval(100)
         self._playback_timer.timeout.connect(self.advancePlayback)
+        self._songs = scan_song_library(self._songs_root)
 
     @pyqtProperty(str, notify=statusChanged)
     def status(self) -> str:
@@ -563,10 +564,10 @@ class WorkbenchBridge(QObject):
     def setRightPanelPreset(self, index: int) -> None:
         if index == 1:
             self.setSeparatorBackend("demucs")
-            self._set_status("右栏预设已切换为“极致消除”：下一次导入会使用 Demucs 人声分离")
+            self._set_status("右栏预设已切换为“真实分离”：下一次导入会使用 Demucs 人声分离")
             return
         self.setSeparatorBackend("preview")
-        self._set_status("右栏预设已切换为“标准人声”：下一次导入会使用快速预览分离")
+        self._set_status("右栏预设已切换为“快速预览”：只用于快速测试，不会真正消除人声")
 
     @pyqtSlot(str)
     def setMasterPluginFromUrl(self, url: str) -> None:
@@ -1282,8 +1283,8 @@ def is_module_available(module_name: str) -> bool:
 
 def separator_backend_label(backend: str) -> str:
     labels = {
-        "preview": "快速预览",
-        "demucs": "Demucs 人声分离",
+        "preview": "快速预览（不消人声）",
+        "demucs": "真实人声分离（较慢）",
     }
     return labels.get(backend, backend)
 
@@ -1316,6 +1317,8 @@ def lyrics_backend_status_text(backend: str) -> str:
 
 
 def format_user_error(message: str) -> str:
+    if "No module named demucs" in message or "demucs" in message and "No module named" in message:
+        return "导入失败：真实人声分离组件不可用。请使用包含 Demucs 的完整环境，或在设置里临时切换为“快速预览（不消人声）”。"
     if "faster-whisper" in message or "faster_whisper" in message:
         return "歌词识别失败：当前完整识别组件不可用。请使用包含智能识别的完整安装包，或切换到“占位提示/不生成歌词”。"
     if "智能歌词识别组件" in message:

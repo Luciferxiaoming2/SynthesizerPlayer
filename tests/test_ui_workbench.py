@@ -23,8 +23,9 @@ def test_workbench_bridge_generates_and_exports_mock_audio(tmp_path):
 def test_workbench_bridge_defaults_to_portable_import_library(tmp_path):
     bridge = WorkbenchBridge(tmp_path)
 
-    assert bridge.songsRoot == str(tmp_path / "导入歌曲")
-    assert (tmp_path / "导入歌曲").exists()
+    assert bridge.songsRoot == str(tmp_path / "save")
+    assert (tmp_path / "save").exists()
+    assert bridge.separatorBackend == "demucs"
 
 
 def test_workbench_bridge_playback_and_lyrics_state(tmp_path):
@@ -354,14 +355,14 @@ def test_workbench_bridge_imports_complete_song(tmp_path):
     complete_song = tmp_path / "complete_song.wav"
     complete_song.write_bytes((tmp_path / "harness" / "mock_data" / "vocal.wav").read_bytes())
 
-    bridge.importSongFromUrl(complete_song.as_uri())
+    bridge.importSongWithBackends(complete_song.as_uri(), "preview", "preview")
 
-    assert "导入歌曲" in bridge.vocalPath
+    assert "save" in bridge.vocalPath
     assert bridge.vocalPath.endswith("vocal.wav")
     assert bridge.instrumentalPath.endswith("instrumental.wav")
     assert bridge.songNames[0].startswith("complete_song")
     assert "导入成功" in bridge.status
-    assert "分离=快速预览" in bridge.status
+    assert "分离=快速预览（不消人声）" in bridge.status
 
 
 def test_workbench_bridge_imports_with_selected_backends(tmp_path):
@@ -434,13 +435,13 @@ def test_right_panel_preset_updates_separator_backend(tmp_path):
 
     assert bridge.separatorBackend == "demucs"
     assert bridge.rightPanelPresetIndex == 1
-    assert "极致消除" in bridge.status
+    assert "真实分离" in bridge.status
 
     bridge.setRightPanelPreset(0)
 
     assert bridge.separatorBackend == "preview"
     assert bridge.rightPanelPresetIndex == 0
-    assert "标准人声" in bridge.status
+    assert "快速预览" in bridge.status
 
 
 def test_right_panel_status_reflects_loaded_audio_and_diagnostics(tmp_path):
@@ -477,8 +478,8 @@ def test_right_panel_plugin_and_lyrics_status_are_chinese(tmp_path):
 
 
 def test_backend_labels_are_chinese_for_ui():
-    assert separator_backend_label("preview") == "快速预览"
-    assert separator_backend_label("demucs") == "Demucs 人声分离"
+    assert separator_backend_label("preview") == "快速预览（不消人声）"
+    assert separator_backend_label("demucs") == "真实人声分离（较慢）"
     assert lyrics_backend_label("preview") == "占位提示"
     assert lyrics_backend_label("faster-whisper") == "智能识别歌词"
     assert lyrics_backend_label("none") == "不生成歌词"

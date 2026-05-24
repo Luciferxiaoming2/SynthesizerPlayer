@@ -31,9 +31,19 @@ ApplicationWindow {
     property real uiScale: Math.max(0.62, Math.min(1.35, Math.min(width / designWidth, height / designHeight)))
     property real tonePreviewValue: 0.4
 
+    function modelIndex(model, value) {
+        if (!model)
+            return -1
+        for (var i = 0; i < model.length; i++) {
+            if (model[i] === value)
+                return i
+        }
+        return -1
+    }
+
     function selectedSeparatorBackend() {
         if (!root.bridge || separatorPicker.currentIndex < 0)
-            return "preview"
+            return "demucs"
         return root.bridge.separatorBackends[separatorPicker.currentIndex]
     }
 
@@ -43,7 +53,12 @@ ApplicationWindow {
         return root.bridge.lyricsBackends[lyricsBackendPicker.currentIndex]
     }
 
-    Component.onCompleted: if (root.bridge) root.bridge.refreshAudioDevices()
+    Component.onCompleted: {
+        if (root.bridge) {
+            root.bridge.refreshAudioDevices()
+            root.bridge.scanSongs()
+        }
+    }
 
     FileDialog {
         id: inputDialog
@@ -304,7 +319,7 @@ ApplicationWindow {
                         ComboBox {
                             id: separatorPicker
                             model: root.bridge ? root.bridge.separatorBackendLabels : []
-                            currentIndex: 0
+                            currentIndex: root.bridge ? Math.max(0, root.modelIndex(root.bridge.separatorBackends, root.bridge.separatorBackend)) : 0
                             Layout.fillWidth: true
                             onActivated: if (root.bridge) root.bridge.setSeparatorBackend(root.selectedSeparatorBackend())
                         }
@@ -533,7 +548,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: "导入歌曲库"
+                    text: "保存歌曲库"
                     color: root.textMuted
                     font.pixelSize: 13
                     Layout.leftMargin: 5
@@ -607,7 +622,7 @@ ApplicationWindow {
                 }
 
                 PrimaryButton {
-                    text: "+  智能分轨导入歌曲"
+                        text: "+  真实分离导入歌曲"
                     enabled: !(root.bridge && root.bridge.importBusy)
                     Layout.fillWidth: true
                     Layout.preferredHeight: 56
@@ -626,7 +641,7 @@ ApplicationWindow {
                         }
                     }
                     SecondaryButton {
-                        text: "⌕ 扫描歌曲库"
+                        text: "⌕ 扫描 save"
                         Layout.fillWidth: true
                         onClicked: if (root.bridge) root.bridge.scanSongs()
                     }
@@ -762,7 +777,7 @@ ApplicationWindow {
                             color: root.bridge && root.bridge.rightPanelPresetIndex === 0 ? root.accent : "transparent"
                             Text {
                                 anchors.centerIn: parent
-                                text: "标准人声"
+                                text: "快速预览"
                                 color: root.bridge && root.bridge.rightPanelPresetIndex === 0 ? "white" : root.textMuted
                                 font.pixelSize: 14
                                 font.bold: true
@@ -779,7 +794,7 @@ ApplicationWindow {
                             color: root.bridge && root.bridge.rightPanelPresetIndex === 1 ? root.accent : "transparent"
                             Text {
                                 anchors.centerIn: parent
-                                text: "极致消除"
+                                text: "真实分离"
                                 color: root.bridge && root.bridge.rightPanelPresetIndex === 1 ? "white" : root.textMuted
                                 font.pixelSize: 14
                                 font.bold: root.bridge && root.bridge.rightPanelPresetIndex === 1
