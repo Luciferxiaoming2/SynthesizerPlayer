@@ -197,6 +197,10 @@ ApplicationWindow {
                     lyricList.positionViewAtIndex(root.bridge.currentLyricIndex, ListView.Center)
                 })
         }
+        function onSongsChanged() {
+            if (root.bridge && root.bridge.currentSongIndex >= 0)
+                songList.currentIndex = root.bridge.currentSongIndex
+        }
     }
 
     Popup {
@@ -542,7 +546,7 @@ ApplicationWindow {
                     clip: true
                     spacing: 10
                     model: root.bridge ? root.bridge.songNames : []
-                    currentIndex: 0
+                    currentIndex: root.bridge && root.bridge.currentSongIndex >= 0 ? root.bridge.currentSongIndex : 0
                     delegate: Rectangle {
                         width: songList.width
                         height: 66
@@ -1021,10 +1025,10 @@ ApplicationWindow {
                             property bool active: ListView.isCurrentItem
                             property bool sung: root.bridge && root.bridge.currentLyricIndex >= 0 && index < root.bridge.currentLyricIndex
 
-                            width: active ? Math.min(610, lyricList.width * 0.76) : (sung ? Math.min(430, lyricList.width * 0.54) : Math.min(520, lyricList.width * 0.64))
-                            height: active ? 116 : (sung ? 56 : 74)
+                            width: active ? Math.min(lyricList.width * 0.9, Math.max(240, lyricText.implicitWidth + 96)) : (sung ? Math.min(430, lyricList.width * 0.54) : Math.min(520, Math.max(220, lyricText.implicitWidth + 72)))
+                            height: active ? 86 : (sung ? 50 : 68)
                             x: (lyricList.width - width) / 2
-                            radius: 16
+                            radius: active ? 18 : 12
                             color: active ? "#2a0a1d" : "transparent"
                             border.color: active ? "#6a2149" : "transparent"
                             opacity: sung && !active ? 0.68 : 1.0
@@ -1033,9 +1037,9 @@ ApplicationWindow {
                                 anchors.fill: parent
                                 anchors.leftMargin: active ? 24 : 4
                                 anchors.rightMargin: active ? 24 : 4
-                                anchors.topMargin: 10
-                                anchors.bottomMargin: 10
-                                spacing: 10
+                                anchors.topMargin: active ? 8 : 6
+                                anchors.bottomMargin: active ? 8 : 6
+                                spacing: active ? 6 : 8
 
                                 Rectangle {
                                     Layout.preferredWidth: 62
@@ -1055,6 +1059,7 @@ ApplicationWindow {
                                 }
 
                                 Text {
+                                    id: lyricText
                                     text: modelData
                                     color: active ? root.accent2 : (sung ? "#948696" : root.textMain)
                                     font.pixelSize: active ? 21 : (sung ? 15 : 20)
@@ -1212,9 +1217,9 @@ ApplicationWindow {
                     }
 
                     IconButton {
-                        label: "↔"
-                        tip: "循环"
-                        enabled: false
+                        label: root.bridge && root.bridge.playModeLabel === "单曲循环" ? "↻" : "⇥"
+                        tip: root.bridge ? root.bridge.playModeLabel : "播放模式"
+                        onClicked: if (root.bridge) root.bridge.cyclePlayMode()
                     }
 
                     Rectangle {

@@ -124,6 +124,7 @@ class WorkbenchBridge(QObject):
         self._status = "Ready"
         self._songs: list[SongAsset] = []
         self._current_song_key: tuple[str, str | None] | None = None
+        self._current_song_index = -1
         self._audio_devices: list[AudioOutputDevice] = []
         self._selected_audio_device_index = -1
         self._separator_backend = "preview"
@@ -148,6 +149,7 @@ class WorkbenchBridge(QObject):
         self._tone_deaf_ratio = 0.4
         self._last_alignment_latency_ms: float | None = None
         self._last_alignment_passed: bool | None = None
+        self._play_mode = "list"
         self._tone_deaf_cache = ToneDeafBufferCache()
         self._playback_timer = QTimer(self)
         self._playback_timer.setInterval(100)
@@ -169,6 +171,10 @@ class WorkbenchBridge(QObject):
     @pyqtProperty("QStringList", notify=songsChanged)
     def songNames(self) -> list[str]:
         return [song.name for song in self._songs]
+
+    @pyqtProperty(int, notify=songsChanged)
+    def currentSongIndex(self) -> int:
+        return self._current_song_index
 
     @pyqtProperty("QStringList", notify=devicesChanged)
     def audioDeviceNames(self) -> list[str]:
@@ -291,6 +297,10 @@ class WorkbenchBridge(QObject):
     @pyqtProperty(bool, notify=playbackChanged)
     def isPlaying(self) -> bool:
         return False if self._playback is None else self._playback.is_playing
+
+    @pyqtProperty(str, notify=playbackChanged)
+    def playModeLabel(self) -> str:
+        return "单曲循环" if self._play_mode == "loop" else "列表播放"
 
     @pyqtProperty(bool, notify=playbackChanged)
     def audioOutputActive(self) -> bool:
@@ -443,6 +453,12 @@ class WorkbenchBridge(QObject):
         self._playback_timer.stop()
         self._update_lyrics()
         self.playbackChanged.emit()
+
+    @pyqtSlot()
+    def cyclePlayMode(self) -> None:
+        self._play_mode = "loop" if self._play_mode == "list" else "list"
+        self.playbackChanged.emit()
+        self._set_status(f"播放模式：{self.playModeLabel}")
 
     @pyqtSlot()
     def startAudioOutput(self) -> None:
@@ -832,6 +848,8 @@ class WorkbenchBridge(QObject):
                 return
             selected = self._songs[index]
             if selected.source_path is not None:
+                self._current_song_index = index
+                self.songsChanged.emit()
                 self.importSongWithBackendsAsync(
                     QUrl.fromLocalFile(str(selected.source_path)).toString(),
                     self._separator_backend,
@@ -840,6 +858,7 @@ class WorkbenchBridge(QObject):
                 return
             session = load_song_session(selected)
             self._current_song_key = song_key(selected)
+            self._current_song_index = index
             self._current_source_path = self._project_source_path(selected.root) or selected.vocal_path
             self._vocal_path = session.asset.vocal_path
             self._instrumental_path = session.asset.instrumental_path
@@ -851,6 +870,7 @@ class WorkbenchBridge(QObject):
             self._lyric_lines = timeline.texts()
             self.pathsChanged.emit()
             self._emit_lyrics_reloaded()
+            self.songsChanged.emit()
             self._set_status(f"已加载歌曲：{session.asset.name}")
             self.loadPlayback()
         except Exception:
@@ -863,6 +883,10 @@ class WorkbenchBridge(QObject):
             return
         removed = self._songs.pop(index)
         removed_current = self._current_song_key == song_key(removed)
+        if self._current_song_index == index:
+            removed_current = True
+        elif self._current_song_index > index:
+            self._current_song_index -= 1
         self.songsChanged.emit()
         self._set_status(f"已从列表移除：{removed.name}")
         if not removed_current:
@@ -874,6 +898,7 @@ class WorkbenchBridge(QObject):
             self.loadSongAt(next_index)
         else:
             self._current_song_key = None
+            self._current_song_index = -1
             self._playback = None
             self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]), self._lyrics_offset_ms)
             self._lyric_lines = []
@@ -888,6 +913,7 @@ class WorkbenchBridge(QObject):
         self.stop()
         self._songs = []
         self._current_song_key = None
+        self._current_song_index = -1
         self._current_source_path = None
         self._playback = None
         self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]), self._lyrics_offset_ms)
@@ -908,8 +934,12 @@ class WorkbenchBridge(QObject):
         if not self._audio_output_active:
             self._playback.render_block(max(1, round(self._playback.buffers.sample_rate * 0.1)))
         if not self._playback.is_playing:
-            self._playback_timer.stop()
-            self._stop_audio_output(reset_engine=False)
+            snapshot = self._playback.snapshot()
+            if snapshot.is_finished:
+                self._handle_playback_finished(was_audio_active=self._audio_output_active)
+            else:
+                self._playback_timer.stop()
+                self._stop_audio_output(reset_engine=False)
         self._update_lyrics()
         self.playbackChanged.emit()
 
@@ -1036,6 +1066,7 @@ class WorkbenchBridge(QObject):
             self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]), self._lyrics_offset_ms)
         self._output_path = project.project_dir / f"{project.name}_export.wav"
         self._current_song_key = song_key(project.asset)
+        self._current_song_index = 0
         self.pathsChanged.emit()
         self.loadPlayback()
         self._upsert_song(project.asset)
@@ -1049,6 +1080,36 @@ class WorkbenchBridge(QObject):
             self.lyricsGenerationPromptRequested.emit(
                 "这首歌没有可用歌词。是否现在使用智能识别生成歌词？"
             )
+
+    def _handle_playback_finished(self, was_audio_active: bool) -> None:
+        self._stop_audio_output(reset_engine=False)
+        if self._play_mode == "loop" and self._playback is not None:
+            self._playback.seek_seconds(0)
+            if was_audio_active:
+                self.startAudioOutput()
+            else:
+                self.play()
+            self._set_status("单曲循环：已从头播放")
+            return
+
+        if self._play_mode == "list" and self._songs:
+            next_index = self._next_song_index()
+            self.loadSongAt(next_index)
+            if was_audio_active:
+                self.startAudioOutput()
+            else:
+                self.play()
+            self._set_status(f"列表播放：已切到 {self._songs[next_index].name}")
+            return
+
+        self._playback_timer.stop()
+
+    def _next_song_index(self) -> int:
+        if not self._songs:
+            return -1
+        if self._current_song_index < 0:
+            return 0
+        return (self._current_song_index + 1) % len(self._songs)
 
     def _lyrics_source_audio_path(self) -> Path | None:
         if self._current_source_path is not None and self._current_source_path.exists():
@@ -1123,6 +1184,7 @@ class WorkbenchBridge(QObject):
             if song.root != asset.root and song.source_path != asset.source_path
         ]
         self._songs.insert(0, asset)
+        self._current_song_index = 0
         self.songsChanged.emit()
 
     def _build_separator(self, backend: str):

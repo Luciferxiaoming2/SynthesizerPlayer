@@ -244,6 +244,52 @@ def test_workbench_bridge_clear_song_list_keeps_files(tmp_path):
     assert "不会删除磁盘文件" in bridge.status
 
 
+def test_workbench_bridge_loops_current_song_when_finished(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+    bridge.cyclePlayMode()
+    assert bridge.playModeLabel == "单曲循环"
+
+    bridge.play()
+    assert bridge._playback is not None
+    bridge._playback.seek_frames(bridge._playback.buffers.frame_count - 1)
+    bridge.advancePlayback()
+
+    assert bridge.isPlaying
+    assert bridge.playbackProgress == 0.0
+    assert "单曲循环" in bridge.status
+
+
+def test_workbench_bridge_advances_to_next_song_in_list_mode(tmp_path):
+    songs_root = tmp_path / "songs"
+    song_a = songs_root / "Song A"
+    song_b = songs_root / "Song B"
+    song_a.mkdir(parents=True)
+    song_b.mkdir()
+
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+    source_vocal = tmp_path / "harness" / "mock_data" / "vocal.wav"
+    source_inst = tmp_path / "harness" / "mock_data" / "instrumental.wav"
+    for folder in (song_a, song_b):
+        (folder / "vocal.wav").write_bytes(source_vocal.read_bytes())
+        (folder / "instrumental.wav").write_bytes(source_inst.read_bytes())
+        (folder / "lyrics.lrc").write_text("[00:00.000]line", encoding="utf-8")
+
+    bridge.setSongsRootFromUrl(songs_root.as_uri())
+    bridge.loadSongAt(0)
+    bridge.play()
+    assert bridge._playback is not None
+    bridge._playback.seek_frames(bridge._playback.buffers.frame_count - 1)
+
+    bridge.advancePlayback()
+
+    assert bridge.currentSongIndex == 1
+    assert bridge.vocalPath == str(song_b / "vocal.wav")
+    assert bridge.isPlaying
+    assert "列表播放" in bridge.status
+
+
 def test_workbench_bridge_blocks_missing_faster_whisper(tmp_path, monkeypatch):
     bridge = WorkbenchBridge(tmp_path)
     song = tmp_path / "song.wav"
