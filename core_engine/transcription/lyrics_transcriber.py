@@ -73,7 +73,8 @@ class FasterWhisperConfig:
     device: str = "cpu"
     compute_type: str = "int8"
     language: str | None = None
-    beam_size: int = 5
+    beam_size: int = 8
+    best_of: int = 5
 
 
 class FasterWhisperLyricsTranscriber(LyricsTranscriber):
@@ -100,7 +101,10 @@ class FasterWhisperLyricsTranscriber(LyricsTranscriber):
             str(request.audio_path),
             language=self._config.language,
             beam_size=self._config.beam_size,
-            initial_prompt="输出歌词请使用简体中文或英文，不要使用繁体中文。",
+            best_of=self._config.best_of,
+            condition_on_previous_text=False,
+            no_speech_threshold=0.55,
+            compression_ratio_threshold=2.4,
         )
 
         lines = []
@@ -182,7 +186,22 @@ TRADITIONAL_TO_SIMPLIFIED = str.maketrans(
 
 def normalize_generated_lyric_text(text: str) -> str:
     normalized = unicodedata.normalize("NFKC", text).translate(TRADITIONAL_TO_SIMPLIFIED)
-    return "".join(
+    cleaned = "".join(
         char for char in normalized.strip()
         if char == "\t" or not unicodedata.category(char).startswith("C")
     )
+    if is_instruction_hallucination(cleaned):
+        return ""
+    return cleaned
+
+
+def is_instruction_hallucination(text: str) -> bool:
+    compact = text.replace(" ", "").replace(",", "，").replace(".", "。")
+    phrases = (
+        "请使用简体中文或英文",
+        "不要使用繁体中文",
+        "使用简体中文",
+        "使用繁体中文",
+        "输出歌词",
+    )
+    return any(phrase in compact for phrase in phrases)

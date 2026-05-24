@@ -7,6 +7,7 @@ from core_engine.transcription import (
     FasterWhisperLyricsTranscriber,
     LyricsTranscriptionRequest,
     PreviewLyricsTranscriber,
+    is_instruction_hallucination,
     normalize_generated_lyric_text,
 )
 
@@ -44,3 +45,10 @@ def test_faster_whisper_transcriber_reports_missing_optional_dependency(tmp_path
 
 def test_generated_lyric_text_prefers_plain_simplified_chinese():
     assert normalize_generated_lyric_text("  愛與夢，聽我說  ") == "爱与梦,听我说"
+
+
+def test_generated_lyric_text_drops_instruction_hallucination():
+    text = "请使用繁体中文或英文,不要使用繁体中文。"
+
+    assert is_instruction_hallucination(text)
+    assert normalize_generated_lyric_text(text) == ""

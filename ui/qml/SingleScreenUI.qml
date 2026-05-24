@@ -191,6 +191,12 @@ ApplicationWindow {
             lyricsConfirmPopup.message = message
             lyricsConfirmPopup.open()
         }
+        function onLyricPositionChanged() {
+            if (root.bridge && root.bridge.currentLyricIndex >= 0)
+                Qt.callLater(function() {
+                    lyricList.positionViewAtIndex(root.bridge.currentLyricIndex, ListView.Center)
+                })
+        }
     }
 
     Popup {
@@ -1013,34 +1019,44 @@ ApplicationWindow {
 
                 Rectangle {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: Math.min(parent.width * 0.82, 720)
-                    Layout.preferredHeight: 98
+                    Layout.preferredWidth: Math.min(parent.width * 0.92, 760)
+                    Layout.preferredHeight: 126
                     radius: 14
                     color: "#0f1119"
                     border.color: "#1f2433"
-                    RowLayout {
+                    ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 16
-                        spacing: 14
-                        Text {
-                            text: "对齐校正:"
-                            color: root.textMain
-                            font.pixelSize: 15
-                        }
-                        Text {
-                            text: "防止人声伴奏歌词对不齐"
-                            color: root.textMuted
-                            font.pixelSize: 13
+                        spacing: 12
+                        RowLayout {
                             Layout.fillWidth: true
+                            Text {
+                                text: "对齐校正"
+                                color: root.textMain
+                                font.pixelSize: 15
+                                font.bold: true
+                            }
+                            Text {
+                                text: "防止人声、伴奏、歌词对不齐"
+                                color: root.textMuted
+                                font.pixelSize: 13
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                            }
                         }
-                        MiniButton { text: "-0.5s\n提前" }
-                        MiniButton { text: "-0.1s" }
-                        MiniButton {
-                            text: "+2.20秒\n延迟"
-                            active: true
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            MiniButton { text: "-0.5s\n提前"; Layout.fillWidth: true }
+                            MiniButton { text: "-0.1s"; Layout.fillWidth: true }
+                            MiniButton {
+                                text: "+2.20秒\n延迟"
+                                active: true
+                                Layout.fillWidth: true
+                            }
+                            MiniButton { text: "+0.1s"; Layout.fillWidth: true }
+                            MiniButton { text: "+0.5s\n滞后"; Layout.fillWidth: true }
                         }
-                        MiniButton { text: "+0.1s" }
-                        MiniButton { text: "+0.5s\n滞后" }
                     }
                 }
             }
@@ -1317,7 +1333,8 @@ ApplicationWindow {
 
     component MiniButton: Button {
         property bool active: false
-        Layout.preferredWidth: 84
+        Layout.preferredWidth: 86
+        Layout.minimumWidth: 70
         Layout.preferredHeight: 60
         contentItem: Text {
             text: parent.text
