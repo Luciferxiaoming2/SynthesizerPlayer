@@ -83,11 +83,14 @@ dist\audio-forge-ui\audio-forge-ui.exe
 
 ## 本地工具与模型目录
 
-打包产物不默认内置大模型和旧歌曲资源。需要真实 Demucs 分离时，推荐在 exe 同级目录放置这些本地资源：
+打包产物不默认内置旧歌曲资源。需要真实 Demucs 分离时，交付包不能要求普通用户自行安装 Python、Demucs、torch 或模型；正式交付必须在 exe 同级目录放置可直接运行的 sidecar 环境和本地资源：
 
 ```text
 dist\audio-forge-ui\
   audio-forge-ui.exe
+  python\python.exe
+  python\Lib\site-packages\demucs\...
+  python\Lib\site-packages\torch\...
   plugins\models\ffmpeg\ffmpeg.exe
   plugins\models\ffmpeg\ffprobe.exe
   plugins\models\torch\hub\checkpoints\*.th
@@ -106,16 +109,23 @@ Demucs 需要可执行 Python。GUI 会按以下顺序查找：
 3. `python\python.exe`
 4. 开发态使用当前解释器，打包态回退到系统 `python`
 
-示例：
+开发阶段可以临时依赖本机环境：
 
 ```powershell
 $env:AUDIO_FORGE_DEMUCS_PYTHON = "D:\uv\venvs\audio_forge\Scripts\python.exe"
 dist\audio-forge-ui\audio-forge-ui.exe
 ```
 
+正式交付时不应依赖上面的开发机路径。交付包应满足：
+
+- 双击 `启动 Audio Forge.bat` 或 `audio-forge-ui.exe` 后即可执行真实人声分离。
+- Demucs、torch、模型 checkpoint、ffmpeg/ffprobe 均来自包内目录。
+- `save\` 作为用户导入歌曲工程目录，随程序首次启动自动创建，不能进入 git。
+- 如包体过大，可拆成“基础包 + 模型环境包”，但安装/解压后仍要做到用户无需手动安装 Python 依赖。
+
 ## 当前限制
 
 - 不默认打包 VST 插件、AI 模型权重、旧歌曲资源。
 - GUI 包当前仍是 MVP，不包含安装器、图标、自动更新和模型管理。
-- Demucs 真实分离依赖外部 Python 环境或 sidecar Python。
+- 当前开发包的 Demucs 真实分离可依赖开发机 `D:\uv\venvs\audio_forge`；正式交付必须改为包内 sidecar Python 环境。
 - 真实 DiffSinger/RVC 后端需要用户额外放置模型和推理脚本，再通过外部命令模板接入。
