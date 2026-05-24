@@ -105,6 +105,62 @@ ApplicationWindow {
         }
     }
 
+    Popup {
+        id: lyricsConfirmPopup
+        anchors.centerIn: parent
+        width: Math.min(parent.width * 0.58, 560)
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        padding: 0
+        property string message: "这首歌没有可用歌词。是否现在生成歌词？"
+
+        background: Rectangle {
+            radius: 10
+            color: "#10121b"
+            border.color: "#34384a"
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 22
+            spacing: 16
+
+            Text {
+                text: "需要歌词吗？"
+                color: root.textMain
+                font.pixelSize: 20
+                font.bold: true
+                Layout.fillWidth: true
+            }
+            Text {
+                text: lyricsConfirmPopup.message
+                color: root.textMuted
+                font.pixelSize: 14
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                SecondaryButton {
+                    text: "暂不生成"
+                    Layout.preferredWidth: 110
+                    onClicked: lyricsConfirmPopup.close()
+                }
+                PrimaryButton {
+                    text: "生成歌词"
+                    Layout.preferredWidth: 120
+                    onClicked: {
+                        lyricsConfirmPopup.close()
+                        if (root.bridge)
+                            root.bridge.generateSmartLyrics()
+                    }
+                }
+            }
+        }
+    }
+
     Timer {
         id: statusPopupTimer
         interval: 3200
@@ -130,6 +186,10 @@ ApplicationWindow {
                 return
             statusPopup.open()
             statusPopupTimer.restart()
+        }
+        function onLyricsGenerationPromptRequested(message) {
+            lyricsConfirmPopup.message = message
+            lyricsConfirmPopup.open()
         }
     }
 
@@ -806,6 +866,12 @@ ApplicationWindow {
                         color: root.accent2
                         font.pixelSize: 14
                         Layout.fillWidth: true
+                    }
+                    SecondaryButton {
+                        text: "生成歌词"
+                        Layout.preferredWidth: 112
+                        Layout.preferredHeight: 36
+                        onClicked: if (root.bridge) root.bridge.generateSmartLyrics()
                     }
                     Rectangle {
                         Layout.preferredWidth: 210

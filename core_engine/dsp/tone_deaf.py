@@ -13,7 +13,7 @@ class ToneDeafConfig:
     hop_ms: float = 20.0
     min_f0_hz: float = 70.0
     max_f0_hz: float = 900.0
-    max_drift_cents: float = 720.0
+    max_drift_cents: float = 420.0
     wobble_hz: float = 3.2
 
     def __post_init__(self) -> None:
@@ -88,7 +88,8 @@ def render_tone_deaf_vocal(
         output[start:end] += rendered * fade
         weights[start:end] += fade
 
-    return output / np.maximum(weights, 1.0)
+    rendered = output / np.maximum(weights, 1.0)
+    return smooth_output_level(audio, rendered)
 
 
 def estimate_f0_track(
@@ -269,3 +270,27 @@ def raised_cosine_window(frame_count: int, overlap: int) -> np.ndarray:
     window[:fade, 0] = fade_in
     window[-fade:, 0] = fade_out
     return window
+
+
+def smooth_output_level(source: np.ndarray, rendered: np.ndarray) -> np.ndarray:
+    """Keep the effect audible without letting resampling transients crackle."""
+
+    source = np.asarray(source, dtype=np.float32)
+    rendered = np.nan_to_num(np.asarray(rendered, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    if rendered.size == 0:
+        return rendered.astype(np.float32)
+
+    source_rms = float(np.sqrt(np.mean(np.square(source, dtype=np.float32)))) + 1e-8
+    rendered_rms = float(np.sqrt(np.mean(np.square(rendered, dtype=np.float32)))) + 1e-8
+    gain = min(1.0, source_rms / rendered_rms)
+    rendered = rendered * gain
+
+    # Soft-limit before the final hard safety clamp. tanh keeps peaks rounded
+    # instead of producing the harsh clipped sound users hear as "炸麦".
+    limiter_threshold = 0.86
+    over = np.abs(rendered) > limiter_threshold
+    if np.any(over):
+        limited = limiter_threshold * np.tanh(rendered / limiter_threshold)
+        rendered = np.where(over, limited, rendered)
+
+    return np.clip(rendered, -0.96, 0.96).astype(np.float32)

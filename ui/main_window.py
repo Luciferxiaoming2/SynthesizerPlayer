@@ -74,6 +74,7 @@ class WorkbenchBridge(QObject):
     devicesChanged = pyqtSignal()
     importOptionsChanged = pyqtSignal()
     importBusyChanged = pyqtSignal()
+    lyricsGenerationPromptRequested = pyqtSignal(str)
 
     def __init__(self, root: Path) -> None:
         super().__init__()
@@ -604,6 +605,13 @@ class WorkbenchBridge(QObject):
         except Exception:
             self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
 
+    @pyqtSlot()
+    def generateSmartLyrics(self) -> None:
+        if is_module_available("faster_whisper") and self._local_lyrics_model_path() is not None:
+            self._lyrics_backend = "faster-whisper"
+            self.importOptionsChanged.emit()
+        self.generateLyrics()
+
     @pyqtSlot(str)
     def setSongsRootFromUrl(self, url: str) -> None:
         self._songs_root = Path(QUrl(url).toLocalFile())
@@ -824,6 +832,7 @@ class WorkbenchBridge(QObject):
         if project.lyrics_path is not None:
             self._lyrics_path = project.lyrics_path
         else:
+            self._lyrics_path = project.project_dir / "lyrics.lrc"
             self._lyric_lines = []
             self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]))
         self._output_path = project.project_dir / f"{project.name}_export.wav"
@@ -837,6 +846,10 @@ class WorkbenchBridge(QObject):
             f"歌词={lyrics_backend_label(lyrics_backend)}）。"
             f"{lyrics_backend_status_text(lyrics_backend)}已加入左侧歌曲库。"
         )
+        if self._lyrics_needs_generation():
+            self.lyricsGenerationPromptRequested.emit(
+                "这首歌没有可用歌词。是否现在使用智能识别生成歌词？"
+            )
 
     def _lyrics_source_audio_path(self) -> Path | None:
         if self._current_source_path is not None and self._current_source_path.exists():
@@ -853,6 +866,21 @@ class WorkbenchBridge(QObject):
         if self._lyrics_path:
             return self._lyrics_path.with_suffix(".lrc")
         return self._mock_dir / "lyrics.lrc"
+
+    def _lyrics_needs_generation(self) -> bool:
+        if not self._lyrics_path or not self._lyrics_path.exists():
+            return True
+        try:
+            text = self._lyrics_path.read_text(encoding="utf-8")
+        except OSError:
+            return True
+        placeholders = (
+            "未找到歌词文件",
+            "请导入 .lrc/.srt",
+            "使用智能识别歌词",
+            "纯音乐或未识别到歌词",
+        )
+        return any(placeholder in text for placeholder in placeholders)
 
     def _project_source_path(self, project_dir: Path) -> Path | None:
         manifest_path = project_dir / "project.json"

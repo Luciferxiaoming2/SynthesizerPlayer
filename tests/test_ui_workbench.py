@@ -380,6 +380,35 @@ def test_workbench_bridge_generate_lyrics_warns_when_backend_is_none(tmp_path):
     assert "不生成歌词" in bridge.status
 
 
+def test_workbench_bridge_prompts_to_generate_when_import_has_no_lyrics(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+    complete_song = tmp_path / "complete_song.wav"
+    complete_song.write_bytes((tmp_path / "harness" / "mock_data" / "vocal.wav").read_bytes())
+    prompts: list[str] = []
+    bridge.lyricsGenerationPromptRequested.connect(prompts.append)
+
+    bridge.importSongWithBackends(complete_song.as_uri(), "preview", "none")
+
+    assert prompts == ["这首歌没有可用歌词。是否现在使用智能识别生成歌词？"]
+    assert bridge.lyricLines == []
+
+
+def test_workbench_bridge_does_not_prompt_when_sidecar_lyrics_exist(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+    complete_song = tmp_path / "complete_song.wav"
+    complete_song.write_bytes((tmp_path / "harness" / "mock_data" / "vocal.wav").read_bytes())
+    complete_song.with_suffix(".lrc").write_text("[00:00.000]real lyric", encoding="utf-8")
+    prompts: list[str] = []
+    bridge.lyricsGenerationPromptRequested.connect(prompts.append)
+
+    bridge.importSongWithBackends(complete_song.as_uri(), "preview", "preview")
+
+    assert prompts == []
+    assert bridge.lyricLines == ["real lyric"]
+
+
 def test_workbench_bridge_prefers_bundled_lyrics_model(tmp_path):
     model_dir = tmp_path / "plugins" / "models" / "faster-whisper" / "base"
     model_dir.mkdir(parents=True)

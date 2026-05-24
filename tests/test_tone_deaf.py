@@ -22,6 +22,22 @@ def test_render_tone_deaf_vocal_preserves_shape_and_changes_signal():
     assert rendered.shape == vocal.shape
     assert rendered.dtype == np.float32
     assert float(np.mean(np.abs(rendered - vocal))) > 0.0001
+    assert float(np.max(np.abs(rendered))) <= 0.96
+
+
+def test_render_tone_deaf_vocal_controls_loud_source_peaks():
+    sample_rate = 16_000
+    time = np.arange(sample_rate, dtype=np.float32) / sample_rate
+    vocal = (0.95 * np.sin(2.0 * np.pi * 220.0 * time))[:, np.newaxis]
+
+    rendered = render_tone_deaf_vocal(
+        vocal,
+        sample_rate,
+        ToneDeafConfig(drift_ratio=1.0, random_seed=2),
+    )
+
+    assert rendered.shape == vocal.shape
+    assert float(np.max(np.abs(rendered))) <= 0.96
 
 
 def test_estimate_f0_track_detects_sine_frequency():
