@@ -20,6 +20,13 @@ def test_workbench_bridge_generates_and_exports_mock_audio(tmp_path):
     assert "已导出" in bridge.status
 
 
+def test_workbench_bridge_defaults_to_portable_import_library(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+
+    assert bridge.songsRoot == str(tmp_path / "导入歌曲")
+    assert (tmp_path / "导入歌曲").exists()
+
+
 def test_workbench_bridge_playback_and_lyrics_state(tmp_path):
     bridge = WorkbenchBridge(tmp_path)
 
@@ -41,6 +48,26 @@ def test_workbench_bridge_playback_and_lyrics_state(tmp_path):
 
     bridge.stop()
     assert bridge.playbackProgress == 0.0
+
+
+def test_workbench_bridge_applies_lyrics_offset(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+
+    bridge.generateMockAudio()
+    bridge.seekProgress(0.25)
+
+    bridge.setLyricsOffsetMs(500)
+
+    assert bridge.lyricsOffsetMs == 500
+    assert bridge.lyricsOffsetLabel == "0.5s"
+    assert "延迟 0.5s" in bridge.status
+    assert bridge._lyrics_sync.offset_ms == 500
+
+    bridge.setLyricsOffsetMs(0)
+
+    assert bridge.lyricsOffsetMs == 0
+    assert bridge.lyricsOffsetLabel == "0s"
+    assert "0 秒" in bridge.status
 
 
 def test_workbench_bridge_applies_tone_deaf_to_loaded_playback(tmp_path):
@@ -283,7 +310,7 @@ def test_workbench_bridge_imports_complete_song(tmp_path):
 
     bridge.importSongFromUrl(complete_song.as_uri())
 
-    assert "projects" in bridge.vocalPath
+    assert "导入歌曲" in bridge.vocalPath
     assert bridge.vocalPath.endswith("vocal.wav")
     assert bridge.instrumentalPath.endswith("instrumental.wav")
     assert bridge.songNames[0].startswith("complete_song")

@@ -112,8 +112,9 @@ class WorkbenchBridge(QObject):
         super().__init__()
         self._root = root
         self._mock_dir = root / "harness" / "mock_data"
-        self._projects_root = root / "projects"
-        self._songs_root = root / "源代码" / "Synthesizer Player" / "Synthesizer Player" / "songs"
+        self._projects_root = root / "导入歌曲"
+        self._projects_root.mkdir(parents=True, exist_ok=True)
+        self._songs_root = self._projects_root
         self._vocal_path = self._mock_dir / "vocal.wav"
         self._instrumental_path = self._mock_dir / "instrumental.wav"
         self._output_path = self._mock_dir / "ui_export_mix.wav"
@@ -143,6 +144,7 @@ class WorkbenchBridge(QObject):
         self._current_lyric_index = -1
         self._current_lyric = ""
         self._next_lyric = ""
+        self._lyrics_offset_ms = 0
         self._tone_deaf_ratio = 0.4
         self._last_alignment_latency_ms: float | None = None
         self._last_alignment_passed: bool | None = None
@@ -322,6 +324,14 @@ class WorkbenchBridge(QObject):
     def currentLyricIndex(self) -> int:
         return self._current_lyric_index
 
+    @pyqtProperty(int, notify=lyricPositionChanged)
+    def lyricsOffsetMs(self) -> int:
+        return self._lyrics_offset_ms
+
+    @pyqtProperty(str, notify=lyricPositionChanged)
+    def lyricsOffsetLabel(self) -> str:
+        return format_offset_ms(self._lyrics_offset_ms)
+
     @pyqtProperty(float, notify=playbackChanged)
     def toneDeafRatio(self) -> float:
         return self._tone_deaf_ratio
@@ -396,7 +406,7 @@ class WorkbenchBridge(QObject):
             buffers = self._build_playback_buffers()
             self._playback = DualTrackPlaybackEngine(buffers)
             timeline = load_lyrics_timeline(self._lyrics_path)
-            self._lyrics_sync = LyricPlaybackSynchronizer(timeline)
+            self._lyrics_sync = LyricPlaybackSynchronizer(timeline, self._lyrics_offset_ms)
             self._lyric_lines = timeline.texts()
             self._emit_lyrics_reloaded()
             self._update_lyrics()
@@ -580,6 +590,23 @@ class WorkbenchBridge(QObject):
         self._set_status("伴奏已静音" if muted else "伴奏已恢复")
         self.playbackChanged.emit()
 
+    @pyqtSlot(int)
+    def setLyricsOffsetMs(self, offset_ms: int) -> None:
+        self._lyrics_offset_ms = max(-10_000, min(10_000, int(offset_ms)))
+        self._lyrics_sync = self._lyrics_sync.with_offset(self._lyrics_offset_ms)
+        self._update_lyrics()
+        self.lyricPositionChanged.emit()
+        if self._lyrics_offset_ms == 0:
+            self._set_status("歌词对齐已恢复为 0 秒，不做校正")
+        elif self._lyrics_offset_ms > 0:
+            self._set_status(f"歌词已延迟 {format_offset_ms(self._lyrics_offset_ms)}")
+        else:
+            self._set_status(f"歌词已提前 {format_offset_ms(abs(self._lyrics_offset_ms))}")
+
+    @pyqtSlot(int)
+    def adjustLyricsOffsetMs(self, delta_ms: int) -> None:
+        self.setLyricsOffsetMs(self._lyrics_offset_ms + int(delta_ms))
+
     @pyqtSlot(str, str)
     def setPathFromUrl(self, target: str, url: str) -> None:
         path = Path(QUrl(url).toLocalFile())
@@ -738,7 +765,7 @@ class WorkbenchBridge(QObject):
 
     def _reload_lyrics_after_generation(self) -> None:
         timeline = load_lyrics_timeline(self._lyrics_path)
-        self._lyrics_sync = LyricPlaybackSynchronizer(timeline)
+        self._lyrics_sync = LyricPlaybackSynchronizer(timeline, self._lyrics_offset_ms)
         self._lyric_lines = timeline.texts()
         self.pathsChanged.emit()
         self._emit_lyrics_reloaded()
@@ -820,7 +847,7 @@ class WorkbenchBridge(QObject):
                 self._lyrics_path = session.asset.lyrics_path
             self._output_path = self._mock_dir / f"{sanitize_filename(session.asset.name)}_export.wav"
             timeline = load_lyrics_timeline(self._lyrics_path)
-            self._lyrics_sync = LyricPlaybackSynchronizer(timeline)
+            self._lyrics_sync = LyricPlaybackSynchronizer(timeline, self._lyrics_offset_ms)
             self._lyric_lines = timeline.texts()
             self.pathsChanged.emit()
             self._emit_lyrics_reloaded()
@@ -848,7 +875,7 @@ class WorkbenchBridge(QObject):
         else:
             self._current_song_key = None
             self._playback = None
-            self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]))
+            self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]), self._lyrics_offset_ms)
             self._lyric_lines = []
             self._current_lyric = ""
             self._next_lyric = ""
@@ -863,7 +890,7 @@ class WorkbenchBridge(QObject):
         self._current_song_key = None
         self._current_source_path = None
         self._playback = None
-        self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]))
+        self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]), self._lyrics_offset_ms)
         self._lyric_lines = []
         self._current_lyric = ""
         self._next_lyric = ""
@@ -1006,7 +1033,7 @@ class WorkbenchBridge(QObject):
         else:
             self._lyrics_path = project.project_dir / "lyrics.lrc"
             self._lyric_lines = []
-            self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]))
+            self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]), self._lyrics_offset_ms)
         self._output_path = project.project_dir / f"{project.name}_export.wav"
         self._current_song_key = song_key(project.asset)
         self.pathsChanged.emit()
@@ -1170,6 +1197,13 @@ def format_seconds(seconds: float) -> str:
     total_seconds = max(0, round(seconds))
     minutes, secs = divmod(total_seconds, 60)
     return f"{minutes:02d}:{secs:02d}"
+
+
+def format_offset_ms(offset_ms: int) -> str:
+    seconds = abs(offset_ms) / 1000.0
+    if seconds.is_integer():
+        return f"{int(seconds)}s"
+    return f"{seconds:.1f}s"
 
 
 def sanitize_filename(value: str) -> str:

@@ -63,6 +63,7 @@ docs/specs/harness_engine.md
 harness/mock_data/*
 !harness/mock_data/.gitkeep
 projects/
+导入歌曲/
 *.wav
 *.mp3
 *.flac

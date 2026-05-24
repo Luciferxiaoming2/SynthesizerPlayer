@@ -529,7 +529,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: "当前歌曲库"
+                    text: "导入歌曲库"
                     color: root.textMuted
                     font.pixelSize: 13
                     Layout.leftMargin: 5
@@ -622,9 +622,25 @@ ApplicationWindow {
                         }
                     }
                     SecondaryButton {
-                        text: "⌕ 扫描本地"
+                        text: "⌕ 扫描歌曲库"
                         Layout.fillWidth: true
                         onClicked: if (root.bridge) root.bridge.scanSongs()
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    SecondaryButton {
+                        text: "删除选中"
+                        enabled: root.bridge && root.bridge.songNames.length > 0
+                        Layout.fillWidth: true
+                        onClicked: if (root.bridge) root.bridge.deleteSongAt(songList.currentIndex)
+                    }
+                    SecondaryButton {
+                        text: "清空列表"
+                        enabled: root.bridge && root.bridge.songNames.length > 0
+                        Layout.fillWidth: true
+                        onClicked: if (root.bridge) root.bridge.clearSongList()
                     }
                 }
             }
@@ -1005,12 +1021,13 @@ ApplicationWindow {
                             property bool active: ListView.isCurrentItem
                             property bool sung: root.bridge && root.bridge.currentLyricIndex >= 0 && index < root.bridge.currentLyricIndex
 
-                            width: active ? Math.min(610, lyricList.width * 0.76) : Math.min(520, lyricList.width * 0.64)
-                            height: active ? 116 : 74
+                            width: active ? Math.min(610, lyricList.width * 0.76) : (sung ? Math.min(430, lyricList.width * 0.54) : Math.min(520, lyricList.width * 0.64))
+                            height: active ? 116 : (sung ? 56 : 74)
                             x: (lyricList.width - width) / 2
                             radius: 16
                             color: active ? "#2a0a1d" : "transparent"
                             border.color: active ? "#6a2149" : "transparent"
+                            opacity: sung && !active ? 0.68 : 1.0
 
                             ColumnLayout {
                                 anchors.fill: parent
@@ -1026,6 +1043,7 @@ ApplicationWindow {
                                     radius: 6
                                     color: "#171a24"
                                     border.color: "#262a38"
+                                    visible: !sung || active
                                     Text {
                                         anchors.centerIn: parent
                                         text: "00:" + ("0" + Math.min(59, index * 5)).slice(-2)
@@ -1038,8 +1056,8 @@ ApplicationWindow {
 
                                 Text {
                                     text: modelData
-                                    color: active ? root.accent2 : (sung ? "#d5bfd0" : root.textMain)
-                                    font.pixelSize: active ? 21 : 20
+                                    color: active ? root.accent2 : (sung ? "#948696" : root.textMain)
+                                    font.pixelSize: active ? 21 : (sung ? 15 : 20)
                                     font.bold: active || sung
                                     elide: Text.ElideRight
                                     Layout.fillWidth: true
@@ -1077,7 +1095,7 @@ ApplicationWindow {
                                 font.bold: true
                             }
                             Text {
-                                text: "防止人声、伴奏、歌词对不齐"
+                                text: root.bridge ? ("当前歌词偏移: " + root.bridge.lyricsOffsetLabel) : "当前歌词偏移: 0s"
                                 color: root.textMuted
                                 font.pixelSize: 13
                                 Layout.fillWidth: true
@@ -1087,15 +1105,36 @@ ApplicationWindow {
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 10
-                            MiniButton { text: "-0.5s\n提前"; Layout.fillWidth: true }
-                            MiniButton { text: "-0.1s"; Layout.fillWidth: true }
                             MiniButton {
-                                text: "+2.20秒\n延迟"
-                                active: true
+                                text: "-0.5s\n提前"
+                                active: root.bridge && root.bridge.lyricsOffsetMs === -500
                                 Layout.fillWidth: true
+                                onClicked: if (root.bridge) root.bridge.setLyricsOffsetMs(-500)
                             }
-                            MiniButton { text: "+0.1s"; Layout.fillWidth: true }
-                            MiniButton { text: "+0.5s\n滞后"; Layout.fillWidth: true }
+                            MiniButton {
+                                text: "-0.1s"
+                                active: root.bridge && root.bridge.lyricsOffsetMs === -100
+                                Layout.fillWidth: true
+                                onClicked: if (root.bridge) root.bridge.setLyricsOffsetMs(-100)
+                            }
+                            MiniButton {
+                                text: "0s\n不校正"
+                                active: !root.bridge || root.bridge.lyricsOffsetMs === 0
+                                Layout.fillWidth: true
+                                onClicked: if (root.bridge) root.bridge.setLyricsOffsetMs(0)
+                            }
+                            MiniButton {
+                                text: "+0.1s"
+                                active: root.bridge && root.bridge.lyricsOffsetMs === 100
+                                Layout.fillWidth: true
+                                onClicked: if (root.bridge) root.bridge.setLyricsOffsetMs(100)
+                            }
+                            MiniButton {
+                                text: "+0.5s\n延迟"
+                                active: root.bridge && root.bridge.lyricsOffsetMs === 500
+                                Layout.fillWidth: true
+                                onClicked: if (root.bridge) root.bridge.setLyricsOffsetMs(500)
+                            }
                         }
                     }
                 }

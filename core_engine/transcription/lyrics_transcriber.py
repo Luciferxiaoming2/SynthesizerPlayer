@@ -127,6 +127,15 @@ def format_lrc_timestamp(position_ms: int) -> str:
     return f"{minutes:02d}:{seconds:02d}.{millis:03d}"
 
 
+TRADITIONAL_PHRASES_TO_SIMPLIFIED = {
+    "輪廓": "轮廓",
+    "看著": "看着",
+    "模樣": "模样",
+    "臉色": "脸色",
+    "說不出": "说不出",
+}
+
+
 TRADITIONAL_TO_SIMPLIFIED = str.maketrans(
     {
         "臺": "台",
@@ -180,12 +189,70 @@ TRADITIONAL_TO_SIMPLIFIED = str.maketrans(
         "隻": "只",
         "個": "个",
         "們": "们",
+        "輪": "轮",
+        "著": "着",
+        "樣": "样",
+        "臉": "脸",
+        "顏": "颜",
+        "願": "愿",
+        "燈": "灯",
+        "體": "体",
+        "斷": "断",
+        "線": "线",
+        "處": "处",
+        "頭": "头",
+        "變": "变",
+        "經": "经",
+        "給": "给",
+        "應": "应",
+        "認": "认",
+        "歲": "岁",
+        "氣": "气",
+        "搖": "摇",
+        "遙": "遥",
+        "遠": "远",
+        "滿": "满",
+        "單": "单",
+        "雙": "双",
+        "實": "实",
+        "幾": "几",
+        "帶": "带",
+        "彎": "弯",
+        "壞": "坏",
+        "髮": "发",
+        "發": "发",
+        "葉": "叶",
+        "邊": "边",
+        "總": "总",
+        "覺": "觉",
+        "裏": "里",
+        "叢": "丛",
+        "區": "区",
+        "畫": "画",
+        "滿": "满",
+        "壓": "压",
+        "靜": "静",
+        "響": "响",
+        "轉": "转",
+        "盡": "尽",
+        "尋": "寻",
+        "寫": "写",
+        "寧": "宁",
+        "樂": "乐",
+        "檢": "检",
+        "擇": "择",
+        "導": "导",
+        "齊": "齐",
+        "顯": "显",
     }
 )
 
 
 def normalize_generated_lyric_text(text: str) -> str:
-    normalized = unicodedata.normalize("NFKC", text).translate(TRADITIONAL_TO_SIMPLIFIED)
+    normalized = unicodedata.normalize("NFKC", text)
+    for source, target in TRADITIONAL_PHRASES_TO_SIMPLIFIED.items():
+        normalized = normalized.replace(source, target)
+    normalized = normalized.translate(TRADITIONAL_TO_SIMPLIFIED)
     cleaned = "".join(
         char for char in normalized.strip()
         if char == "\t" or not unicodedata.category(char).startswith("C")

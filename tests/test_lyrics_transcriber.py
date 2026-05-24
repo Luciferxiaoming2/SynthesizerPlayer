@@ -45,6 +45,7 @@ def test_faster_whisper_transcriber_reports_missing_optional_dependency(tmp_path
 
 def test_generated_lyric_text_prefers_plain_simplified_chinese():
     assert normalize_generated_lyric_text("  愛與夢，聽我說  ") == "爱与梦,听我说"
+    assert normalize_generated_lyric_text("說不出你的輪廓 看著你的模樣") == "说不出你的轮廓 看着你的模样"
 
 
 def test_generated_lyric_text_drops_instruction_hallucination():
