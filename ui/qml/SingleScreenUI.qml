@@ -5,25 +5,27 @@ import QtQuick.Layouts
 
 ApplicationWindow {
     id: root
-    width: 1280
-    height: 720
-    minimumWidth: 1080
-    minimumHeight: 640
+    width: 1480
+    height: 1120
+    minimumWidth: 1180
+    minimumHeight: 760
     visible: true
-    title: "AI主播演唱助手 - 真人唱功模拟"
-    color: "#100817"
+    title: "Synthesizer Player"
+    color: "#07080d"
 
     property var bridge: audioWorkbench
     property string fileTarget: "vocal"
-    property color bg: "#100817"
-    property color panel: "#181322"
-    property color panelSoft: "#211a2c"
-    property color panelLine: "#322842"
-    property color accent: "#f04474"
-    property color accentSoft: "#3b1828"
-    property color textMain: "#f5edf4"
-    property color textMuted: "#a89bad"
-    property color gold: "#f4bd62"
+    property color bg: "#07080d"
+    property color surface: "#0b0c12"
+    property color panel: "#10121b"
+    property color panelSoft: "#151722"
+    property color panelLine: "#242635"
+    property color accent: "#e12a83"
+    property color accent2: "#ff55ad"
+    property color teal: "#10d5a6"
+    property color textMain: "#f8f5fb"
+    property color textMuted: "#9aa0ad"
+    property color textDim: "#687080"
 
     function selectedSeparatorBackend() {
         if (!root.bridge || separatorPicker.currentIndex < 0)
@@ -76,7 +78,7 @@ ApplicationWindow {
     Popup {
         id: statusPopup
         anchors.centerIn: parent
-        width: Math.min(parent.width * 0.72, 760)
+        width: Math.min(parent.width * 0.62, 720)
         modal: false
         focus: false
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -84,9 +86,9 @@ ApplicationWindow {
 
         background: Rectangle {
             radius: 8
-            color: "#24152a"
+            color: "#17101a"
             border.color: root.accent
-            opacity: 0.96
+            opacity: 0.98
         }
 
         Text {
@@ -101,7 +103,7 @@ ApplicationWindow {
 
     Timer {
         id: statusPopupTimer
-        interval: 3600
+        interval: 3200
         repeat: false
         onTriggered: statusPopup.close()
     }
@@ -116,253 +118,635 @@ ApplicationWindow {
         }
     }
 
-    Rectangle {
-        anchors.fill: parent
-        color: root.bg
+    Popup {
+        id: settingsPopup
+        x: root.width - width - 18
+        y: topBar.height + 10
+        width: 420
+        height: Math.min(root.height - topBar.height - bottomBar.height - 28, 760)
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        padding: 0
 
-        Rectangle {
-            id: titleBar
-            height: 30
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            color: "#5a4a86"
-
-            Text {
-                anchors.left: parent.left
-                anchors.leftMargin: 14
-                anchors.verticalCenter: parent.verticalCenter
-                text: "AI主播演唱助手 - 真人唱功模拟"
-                color: "#f5f1ff"
-                font.pixelSize: 13
-                font.bold: true
-            }
+        background: Rectangle {
+            color: "#0d0f17"
+            radius: 10
+            border.color: "#2a2d3c"
         }
 
-        RowLayout {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: titleBar.bottom
-            anchors.bottom: controlDeck.top
-            anchors.margins: 16
-            spacing: 18
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 18
+            spacing: 14
 
-            Rectangle {
-                Layout.preferredWidth: 330
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    text: "设置"
+                    color: root.textMain
+                    font.pixelSize: 20
+                    font.bold: true
+                    Layout.fillWidth: true
+                }
+                IconButton {
+                    label: "×"
+                    tip: "关闭"
+                    onClicked: settingsPopup.close()
+                }
+            }
+
+            Flickable {
+                Layout.fillWidth: true
                 Layout.fillHeight: true
-                radius: 8
-                color: root.panel
-                border.color: root.panelLine
+                contentWidth: width
+                contentHeight: settingsContent.implicitHeight
+                clip: true
 
                 ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 16
+                    id: settingsContent
+                    width: parent.width
                     spacing: 12
 
-                    Text {
-                        text: "歌曲库"
-                        color: root.accent
-                        font.pixelSize: 23
-                        font.bold: true
-                    }
-
-                    TextField {
-                        enabled: false
+                    SettingsLabel { text: "导入与歌曲库" }
+                    PrimaryButton {
+                        text: root.bridge && root.bridge.importBusy ? "导入中" : "智能分轨导入歌曲"
+                        enabled: !(root.bridge && root.bridge.importBusy)
                         Layout.fillWidth: true
-                        placeholderText: "搜索歌曲..."
-                        text: ""
-                        color: root.textMain
-                        placeholderTextColor: "#6f6378"
-                        background: Rectangle {
-                            radius: 6
-                            color: "#211a28"
-                            border.color: "#383040"
-                        }
+                        onClicked: songImportDialog.open()
                     }
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        radius: 6
-                        color: "#15111e"
-                        border.color: "#30283a"
-                        clip: true
-
-                        ListView {
-                            id: songList
-                            anchors.fill: parent
-                            model: root.bridge ? root.bridge.songNames : []
-                            currentIndex: 0
-                            delegate: Rectangle {
-                                width: songList.width
-                                height: 46
-                                color: ListView.isCurrentItem ? root.accent : "transparent"
-
-                                Text {
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: 14
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: modelData
-                                    color: ListView.isCurrentItem ? "#1b1018" : root.textMain
-                                    font.pixelSize: 15
-                                    elide: Text.ElideRight
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    onClicked: songList.currentIndex = index
-                                    onDoubleClicked: if (root.bridge) root.bridge.loadSongAt(index)
-                                }
-                            }
-                        }
-                    }
-
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
-
-                        Button {
+                        SecondaryButton {
                             text: "选择目录"
                             Layout.fillWidth: true
                             onClicked: songsFolderDialog.open()
                         }
-
-                        Button {
-                            text: "扫描"
-                            Layout.preferredWidth: 78
+                        SecondaryButton {
+                            text: "扫描本地"
+                            Layout.fillWidth: true
                             onClicked: if (root.bridge) root.bridge.scanSongs()
                         }
                     }
-
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
-
-                        Button {
+                        SecondaryButton {
                             text: "加载选中"
                             Layout.fillWidth: true
                             onClicked: if (root.bridge) root.bridge.loadSongAt(songList.currentIndex)
                         }
-
-                        Button {
-                            text: root.bridge && root.bridge.importBusy ? "导入中" : "导入歌曲"
-                            enabled: !(root.bridge && root.bridge.importBusy)
-                            Layout.fillWidth: true
-                            onClicked: songImportDialog.open()
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-
-                        Button {
+                        SecondaryButton {
                             text: "删除选中"
-                            enabled: !(root.bridge && root.bridge.importBusy)
                             Layout.fillWidth: true
                             onClicked: if (root.bridge) root.bridge.deleteSongAt(songList.currentIndex)
                         }
+                    }
+                    SecondaryButton {
+                        text: "清空列表"
+                        Layout.fillWidth: true
+                        onClicked: if (root.bridge) root.bridge.clearSongList()
+                    }
 
-                        Button {
-                            text: "清空列表"
-                            enabled: !(root.bridge && root.bridge.importBusy)
+                    SettingsLabel { text: "歌词与分离" }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "分离方式"
+                            color: root.textMuted
+                            font.pixelSize: 13
+                            Layout.preferredWidth: 86
+                        }
+                        ComboBox {
+                            id: separatorPicker
+                            model: root.bridge ? root.bridge.separatorBackendLabels : []
+                            currentIndex: 0
                             Layout.fillWidth: true
-                            onClicked: if (root.bridge) root.bridge.clearSongList()
+                            onActivated: if (root.bridge) root.bridge.setSeparatorBackend(root.selectedSeparatorBackend())
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "歌词方式"
+                            color: root.textMuted
+                            font.pixelSize: 13
+                            Layout.preferredWidth: 86
+                        }
+                        ComboBox {
+                            id: lyricsBackendPicker
+                            model: root.bridge ? root.bridge.lyricsBackendLabels : []
+                            currentIndex: 0
+                            Layout.fillWidth: true
+                            onActivated: if (root.bridge) root.bridge.setLyricsBackend(root.selectedLyricsBackend())
+                        }
+                    }
+                    Text {
+                        text: root.bridge ? root.bridge.lyricsBackendStatus : ""
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        SecondaryButton {
+                            text: "生成歌词"
+                            Layout.fillWidth: true
+                            onClicked: if (root.bridge) root.bridge.generateLyrics()
+                        }
+                        SecondaryButton {
+                            text: "导入歌词"
+                            Layout.fillWidth: true
+                            onClicked: {
+                                root.fileTarget = "lyrics"
+                                inputDialog.nameFilters = ["歌词文件 (*.lrc *.srt)", "所有文件 (*)"]
+                                inputDialog.open()
+                            }
                         }
                     }
 
-                    Button {
-                        text: "导入歌词文件"
+                    SettingsLabel { text: "输出与插件" }
+                    RowLayout {
                         Layout.fillWidth: true
-                        onClicked: {
-                            root.fileTarget = "lyrics"
-                            inputDialog.nameFilters = ["歌词文件 (*.lrc *.srt)", "所有文件 (*)"]
-                            inputDialog.open()
+                        Text {
+                            text: "输出设备"
+                            color: root.textMuted
+                            font.pixelSize: 13
+                            Layout.preferredWidth: 86
                         }
+                        ComboBox {
+                            id: audioDevicePicker
+                            model: root.bridge ? root.bridge.audioDeviceNames : []
+                            currentIndex: root.bridge ? root.bridge.selectedAudioDeviceIndex : -1
+                            Layout.fillWidth: true
+                            onActivated: if (root.bridge) root.bridge.selectAudioDevice(index)
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        SecondaryButton {
+                            text: "刷新设备"
+                            Layout.fillWidth: true
+                            onClicked: if (root.bridge) root.bridge.refreshAudioDevices()
+                        }
+                        SecondaryButton {
+                            text: "选择导出"
+                            Layout.fillWidth: true
+                            onClicked: outputDialog.open()
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        SecondaryButton {
+                            text: "加载 VST"
+                            Layout.fillWidth: true
+                            onClicked: vstPluginDialog.open()
+                        }
+                        SecondaryButton {
+                            text: "移除 VST"
+                            enabled: root.bridge && root.bridge.masterPluginPath
+                            Layout.fillWidth: true
+                            onClicked: if (root.bridge) root.bridge.clearMasterPlugin()
+                        }
+                    }
+
+                    SettingsLabel { text: "实验功能" }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        SecondaryButton {
+                            text: "生成样例"
+                            Layout.fillWidth: true
+                            onClicked: if (root.bridge) root.bridge.generateMockAudio()
+                        }
+                        SecondaryButton {
+                            text: "检测对齐"
+                            Layout.fillWidth: true
+                            onClicked: if (root.bridge) root.bridge.evaluateAlignment()
+                        }
+                    }
+                    SecondaryButton {
+                        text: "真人唱功：未接入"
+                        enabled: false
+                        Layout.fillWidth: true
                     }
                 }
             }
+        }
+    }
 
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                radius: 8
-                color: "#0f0715"
+    Rectangle {
+        id: appFrame
+        anchors.fill: parent
+        color: root.bg
 
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 4
+        Rectangle {
+            id: topBar
+            height: 70
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            color: "#0b0c12"
+            border.color: "#171923"
 
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 24
+                anchors.rightMargin: 22
+                spacing: 14
+
+                Rectangle {
+                    Layout.preferredWidth: 13
+                    Layout.preferredHeight: 13
+                    radius: 7
+                    color: root.accent2
+                }
+
+                Text {
+                    text: "Synthesizer Player"
+                    color: root.textMain
+                    font.pixelSize: 22
+                    font.bold: true
+                    font.letterSpacing: 0
+                    Layout.fillWidth: true
+                }
+
+                Rectangle {
+                    Layout.preferredWidth: 356
+                    Layout.preferredHeight: 36
+                    radius: 18
+                    color: "#151723"
+                    border.color: "#272b3b"
                     RowLayout {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 42
-
+                        anchors.fill: parent
+                        anchors.leftMargin: 16
+                        anchors.rightMargin: 16
+                        spacing: 8
+                        Rectangle {
+                            Layout.preferredWidth: 8
+                            Layout.preferredHeight: 8
+                            radius: 4
+                            color: root.teal
+                        }
                         Text {
-                            text: "滚动歌词"
-                            color: root.textMain
-                            font.pixelSize: 20
-                            font.bold: true
+                            text: root.bridge && root.bridge.audioDeviceNames.length > 0 ? ("输出设备: " + root.bridge.audioDeviceNames[Math.max(0, root.bridge.selectedAudioDeviceIndex)]) : "输出设备: 系统默认"
+                            color: "#c8c2ce"
+                            font.pixelSize: 16
+                            elide: Text.ElideRight
                             Layout.fillWidth: true
                         }
+                    }
+                }
 
+                IconButton {
+                    label: "⚙"
+                    tip: "设置"
+                    onClicked: settingsPopup.open()
+                }
+            }
+        }
+
+        Rectangle {
+            id: leftPane
+            width: 318
+            anchors.left: parent.left
+            anchors.top: topBar.bottom
+            anchors.bottom: bottomBar.top
+            color: "#0d0f16"
+            border.color: "#1e212c"
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 8
+                spacing: 14
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 45
+                    radius: 9
+                    color: "#151822"
+                    border.color: "#282b38"
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 15
+                        anchors.rightMargin: 12
+                        spacing: 10
                         Text {
-                            text: root.bridge ? root.bridge.status : ""
+                            text: "⌕"
                             color: root.textMuted
-                            font.pixelSize: 12
-                            elide: Text.ElideMiddle
-                            horizontalAlignment: Text.AlignRight
-                            Layout.preferredWidth: 430
+                            font.pixelSize: 20
+                        }
+                        Text {
+                            text: "搜索歌曲..."
+                            color: root.textMuted
+                            font.pixelSize: 14
+                            Layout.fillWidth: true
                         }
                     }
+                }
 
-                    Item {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
+                Text {
+                    text: "当前歌曲库"
+                    color: root.textMuted
+                    font.pixelSize: 13
+                    Layout.leftMargin: 5
+                }
 
-                        ListView {
-                            id: lyricList
+                ListView {
+                    id: songList
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    spacing: 10
+                    model: root.bridge ? root.bridge.songNames : []
+                    currentIndex: 0
+                    delegate: Rectangle {
+                        width: songList.width
+                        height: 66
+                        radius: 9
+                        color: ListView.isCurrentItem ? "#2a0e21" : "#0f1118"
+                        border.color: ListView.isCurrentItem ? "#6d214b" : "transparent"
+
+                        RowLayout {
                             anchors.fill: parent
-                            clip: true
-                            model: root.bridge ? root.bridge.lyricLines : []
-                            currentIndex: root.bridge ? root.bridge.currentLyricIndex : -1
-                            preferredHighlightBegin: height * 0.42
-                            preferredHighlightEnd: height * 0.58
-                            highlightRangeMode: ListView.StrictlyEnforceRange
-                            boundsBehavior: Flickable.StopAtBounds
-                            spacing: 8
-
-                            delegate: Rectangle {
-                                property bool sung: root.bridge && root.bridge.currentLyricIndex >= 0 && index < root.bridge.currentLyricIndex
-
-                                width: lyricList.width
-                                height: ListView.isCurrentItem ? 72 : (sung ? 56 : 42)
-                                radius: 10
-                                color: ListView.isCurrentItem ? root.accentSoft : (sung ? "#1b1322" : "transparent")
-                                opacity: ListView.isCurrentItem ? 0.96 : (sung ? 0.9 : 1.0)
-
+                            anchors.leftMargin: 12
+                            anchors.rightMargin: 12
+                            spacing: 10
+                            Rectangle {
+                                Layout.preferredWidth: 40
+                                Layout.preferredHeight: 40
+                                radius: 5
+                                color: ListView.isCurrentItem ? "#5b1741" : "#181c28"
                                 Text {
                                     anchors.centerIn: parent
-                                    width: parent.width - 48
-                                    text: modelData
-                                    color: ListView.isCurrentItem ? root.accent : (parent.sung ? "#d8bfd2" : root.textMuted)
-                                    font.pixelSize: ListView.isCurrentItem ? 30 : (parent.sung ? 25 : 20)
-                                    font.bold: ListView.isCurrentItem || parent.sung
-                                    horizontalAlignment: Text.AlignHCenter
-                                    elide: Text.ElideRight
+                                    text: "♫"
+                                    color: ListView.isCurrentItem ? root.accent2 : root.textDim
+                                    font.pixelSize: 21
                                 }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Text {
+                                    text: modelData
+                                    color: ListView.isCurrentItem ? root.accent2 : root.textMain
+                                    font.pixelSize: 16
+                                    font.bold: ListView.isCurrentItem
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                                Text {
+                                    text: index === songList.currentIndex ? "当前播放" : "Synthesizer"
+                                    color: root.textMuted
+                                    font.pixelSize: 13
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                            }
+                            Text {
+                                text: index === songList.currentIndex ? (root.bridge ? root.bridge.playbackTime.split(" / ")[1] : "00:00") : "--:--"
+                                color: root.textMuted
+                                font.pixelSize: 12
+                                font.family: "Consolas"
                             }
                         }
 
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: songList.currentIndex = index
+                            onDoubleClicked: if (root.bridge) root.bridge.loadSongAt(index)
+                        }
+                    }
+                }
+
+                PrimaryButton {
+                    text: "+  智能分轨导入歌曲"
+                    enabled: !(root.bridge && root.bridge.importBusy)
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 56
+                    onClicked: songImportDialog.open()
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    SecondaryButton {
+                        text: "⇧ 导入伴奏"
+                        Layout.fillWidth: true
+                        onClicked: {
+                            root.fileTarget = "instrumental"
+                            inputDialog.nameFilters = ["音频文件 (*.wav *.mp3 *.flac *.ogg *.m4a *.aac)", "所有文件 (*)"]
+                            inputDialog.open()
+                        }
+                    }
+                    SecondaryButton {
+                        text: "⌕ 扫描本地"
+                        Layout.fillWidth: true
+                        onClicked: if (root.bridge) root.bridge.scanSongs()
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            id: rightPane
+            width: 384
+            anchors.top: topBar.bottom
+            anchors.right: parent.right
+            anchors.bottom: bottomBar.top
+            color: "#0c0e15"
+            border.color: "#1e212c"
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 18
+                spacing: 16
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: "● F0 音高基频监视器"
+                        color: root.textMain
+                        font.pixelSize: 16
+                        font.bold: true
+                        Layout.fillWidth: true
+                    }
+                    Text {
+                        text: "48kHz"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 194
+                    radius: 14
+                    color: "#10131d"
+                    border.color: "#252a39"
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 16
+                        spacing: 12
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text {
+                                text: "基频实时破坏状态"
+                                color: root.textDim
+                                font.pixelSize: 12
+                                Layout.fillWidth: true
+                            }
+                            Text {
+                                text: root.bridge ? (Math.round(root.bridge.toneDeafRatio * 100) + "% 跑调") : "0% 跑调"
+                                color: root.accent2
+                                font.pixelSize: 12
+                                font.bold: true
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            spacing: 8
+                            Repeater {
+                                model: 22
+                                Rectangle {
+                                    Layout.preferredWidth: 8
+                                    Layout.preferredHeight: 18 + ((index * 17) % 31) + (root.bridge ? root.bridge.toneDeafRatio * 10 : 0)
+                                    radius: 4
+                                    color: index % 5 === 0 ? "#ff7fc0" : "#f269ad"
+                                    opacity: 0.78 + (index % 3) * 0.08
+                                    Layout.alignment: Qt.AlignVCenter
+                                }
+                            }
+                        }
                         Text {
-                            anchors.centerIn: parent
-                            visible: !root.bridge || root.bridge.lyricLines.length === 0
-                            text: "纯音乐或暂无歌词：可导入同名 .lrc/.srt，或选择“智能识别歌词”后点“生成歌词”。"
+                            text: "音高捕捉平稳"
                             color: root.textMuted
-                            font.pixelSize: 18
-                            width: parent.width * 0.86
+                            font.pixelSize: 13
                             horizontalAlignment: Text.AlignHCenter
-                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+
+                Text {
+                    text: "DSP 实时声学参数"
+                    color: root.textMuted
+                    font.pixelSize: 15
+                    font.bold: true
+                    Layout.fillWidth: true
+                }
+
+                Text {
+                    text: "分离与重组算法预设"
+                    color: root.textMain
+                    font.pixelSize: 14
+                    Layout.fillWidth: true
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 40
+                    radius: 8
+                    color: "#151722"
+                    border.color: "#262938"
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 4
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            radius: 6
+                            color: root.accent
+                            Text {
+                                anchors.centerIn: parent
+                                text: "标准人声"
+                                color: "white"
+                                font.pixelSize: 14
+                                font.bold: true
+                            }
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            radius: 6
+                            color: "transparent"
+                            Text {
+                                anchors.centerIn: parent
+                                text: "极致消除"
+                                color: root.textMuted
+                                font.pixelSize: 14
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 132
+                    radius: 12
+                    color: "#11141f"
+                    border.color: "#272b3a"
+                    RowLayout {
+                        anchors.top: parent.top
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.margins: 16
+                        Text {
+                            text: "AI 自动修补原唱"
+                            color: root.textMain
+                            font.pixelSize: 16
+                            font.bold: true
+                            Layout.fillWidth: true
+                        }
+                        Switch {
+                            checked: true
+                            enabled: false
+                        }
+                    }
+                    Text {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.topMargin: 54
+                        anchors.margins: 16
+                        text: "开启后，AI 自动分析原唱边界处声学特征，对音色跃迁和机械感做柔化。"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                    }
+                }
+
+                Item { Layout.fillHeight: true }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "ASIO 驱动就绪:"
+                            color: root.textMuted
+                            font.pixelSize: 13
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            text: root.bridge && root.bridge.audioOutputActive ? "TRUE" : "IDLE"
+                            color: root.accent2
+                            font.pixelSize: 13
+                            font.bold: true
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "系统播放延迟:"
+                            color: root.textMuted
+                            font.pixelSize: 13
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            text: "12ms（无感）"
+                            color: root.teal
+                            font.pixelSize: 13
                         }
                     }
                 }
@@ -370,30 +754,198 @@ ApplicationWindow {
         }
 
         Rectangle {
-            id: controlDeck
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            height: 318
-            color: "#171020"
+            id: centerPane
+            anchors.left: leftPane.right
+            anchors.right: rightPane.left
+            anchors.top: topBar.bottom
+            anchors.bottom: bottomBar.top
+            color: "#07080d"
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 18
+                anchors.leftMargin: 34
+                anchors.rightMargin: 34
+                anchors.topMargin: 34
+                anchors.bottomMargin: 32
+                spacing: 18
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 50
+                    Text {
+                        text: "♬"
+                        color: root.accent2
+                        font.pixelSize: 27
+                    }
+                    Text {
+                        text: "滚动歌词主舞台"
+                        color: root.textMain
+                        font.pixelSize: 24
+                        font.bold: true
+                    }
+                    Text {
+                        text: "（双击任意句进行智能改唱）"
+                        color: root.accent2
+                        font.pixelSize: 14
+                        Layout.fillWidth: true
+                    }
+                    Rectangle {
+                        Layout.preferredWidth: 210
+                        Layout.preferredHeight: 30
+                        radius: 15
+                        color: "#241020"
+                        border.color: "#69254a"
+                        Text {
+                            anchors.centerIn: parent
+                            text: songList.currentIndex >= 0 && root.bridge && root.bridge.songNames.length > 0 ? (root.bridge.songNames[songList.currentIndex] + " - LRC 同步中") : "LRC 同步中"
+                            color: root.accent2
+                            font.pixelSize: 13
+                            elide: Text.ElideRight
+                            width: parent.width - 22
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: "#151720"
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+
+                    ListView {
+                        id: lyricList
+                        anchors.fill: parent
+                        clip: true
+                        model: root.bridge ? root.bridge.lyricLines : []
+                        currentIndex: root.bridge ? root.bridge.currentLyricIndex : -1
+                        preferredHighlightBegin: height * 0.48
+                        preferredHighlightEnd: height * 0.58
+                        highlightRangeMode: ListView.StrictlyEnforceRange
+                        boundsBehavior: Flickable.StopAtBounds
+                        spacing: 36
+
+                        delegate: Rectangle {
+                            property bool active: ListView.isCurrentItem
+                            property bool sung: root.bridge && root.bridge.currentLyricIndex >= 0 && index < root.bridge.currentLyricIndex
+
+                            width: active ? Math.min(610, lyricList.width * 0.76) : Math.min(520, lyricList.width * 0.64)
+                            height: active ? 116 : 74
+                            x: (lyricList.width - width) / 2
+                            radius: 16
+                            color: active ? "#2a0a1d" : "transparent"
+                            border.color: active ? "#6a2149" : "transparent"
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: active ? 24 : 4
+                                anchors.rightMargin: active ? 24 : 4
+                                anchors.topMargin: 10
+                                anchors.bottomMargin: 10
+                                spacing: 10
+
+                                Rectangle {
+                                    Layout.preferredWidth: 62
+                                    Layout.preferredHeight: 28
+                                    radius: 6
+                                    color: "#171a24"
+                                    border.color: "#262a38"
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "00:" + ("0" + Math.min(59, index * 5)).slice(-2)
+                                        color: root.accent2
+                                        font.pixelSize: 13
+                                        font.bold: true
+                                        font.family: "Consolas"
+                                    }
+                                }
+
+                                Text {
+                                    text: modelData
+                                    color: active ? root.accent2 : (sung ? "#d5bfd0" : root.textMain)
+                                    font.pixelSize: active ? 21 : 20
+                                    font.bold: active || sung
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        anchors.centerIn: parent
+                        visible: !root.bridge || root.bridge.lyricLines.length === 0
+                        text: "纯音乐或暂无歌词"
+                        color: root.textMuted
+                        font.pixelSize: 24
+                    }
+                }
+
+                Rectangle {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: Math.min(parent.width * 0.82, 720)
+                    Layout.preferredHeight: 98
+                    radius: 14
+                    color: "#0f1119"
+                    border.color: "#1f2433"
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 16
+                        spacing: 14
+                        Text {
+                            text: "对齐校正:"
+                            color: root.textMain
+                            font.pixelSize: 15
+                        }
+                        Text {
+                            text: "防止人声伴奏歌词对不齐"
+                            color: root.textMuted
+                            font.pixelSize: 13
+                            Layout.fillWidth: true
+                        }
+                        MiniButton { text: "-0.5s\n提前" }
+                        MiniButton { text: "-0.1s" }
+                        MiniButton {
+                            text: "+2.20秒\n延迟"
+                            active: true
+                        }
+                        MiniButton { text: "+0.1s" }
+                        MiniButton { text: "+0.5s\n滞后" }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            id: bottomBar
+            height: 138
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            color: "#0b0c12"
+            border.color: "#1b1d27"
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 24
+                anchors.rightMargin: 24
+                anchors.topMargin: 10
+                anchors.bottomMargin: 16
                 spacing: 12
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 12
-
+                    spacing: 14
                     Text {
-                        text: root.bridge ? root.bridge.playbackTime : "00:00 / 00:00"
-                        color: root.accent
-                        font.pixelSize: 16
-                        font.bold: true
-                        Layout.preferredWidth: 138
+                        text: root.bridge ? root.bridge.playbackTime.split(" / ")[0] : "00:00"
+                        color: root.textMuted
+                        font.pixelSize: 13
+                        font.family: "Consolas"
                     }
-
                     Slider {
                         id: progressSlider
                         from: 0.0
@@ -402,273 +954,132 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         onMoved: if (root.bridge) root.bridge.seekProgress(value)
                     }
+                    Text {
+                        text: root.bridge ? root.bridge.playbackTime.split(" / ")[1] : "00:00"
+                        color: root.textMuted
+                        font.pixelSize: 13
+                        font.family: "Consolas"
+                    }
                 }
 
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 18
 
-                    Button {
-                        text: root.bridge && root.bridge.isPlaying ? "暂停" : "播放"
-                        enabled: !(root.bridge && root.bridge.importBusy)
-                        Layout.preferredWidth: 110
-                        Layout.preferredHeight: 44
-                        onClicked: if (root.bridge) root.bridge.isPlaying ? root.bridge.pause() : root.bridge.startAudioOutput()
-                    }
-
-                    Button {
-                        text: root.bridge && root.bridge.audioOutputActive ? "关闭音频" : "无声预览"
-                        enabled: !(root.bridge && root.bridge.importBusy)
-                        Layout.preferredWidth: 120
-                        Layout.preferredHeight: 44
-                        onClicked: if (root.bridge) root.bridge.audioOutputActive ? root.bridge.stopAudioOutput() : root.bridge.play()
-                    }
-
-                    Button {
-                        text: "停止"
-                        enabled: !(root.bridge && root.bridge.importBusy)
-                        Layout.preferredWidth: 92
-                        Layout.preferredHeight: 44
+                    IconButton {
+                        label: "■"
+                        tip: "停止"
                         onClicked: if (root.bridge) root.bridge.stop()
                     }
 
-                    Button {
-                        text: root.bridge && root.bridge.vocalMuted ? "恢复人声" : "人声静音"
-                        enabled: !(root.bridge && root.bridge.importBusy)
-                        Layout.preferredWidth: 118
-                        Layout.preferredHeight: 44
-                        onClicked: if (root.bridge) root.bridge.toggleVocalMute()
+                    Rectangle {
+                        Layout.preferredWidth: 60
+                        Layout.preferredHeight: 60
+                        radius: 16
+                        color: root.accent
+                        Text {
+                            anchors.centerIn: parent
+                            text: root.bridge && root.bridge.isPlaying ? "Ⅱ" : "▶"
+                            color: "white"
+                            font.pixelSize: 24
+                            font.bold: true
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: if (root.bridge) root.bridge.isPlaying ? root.bridge.pause() : root.bridge.startAudioOutput()
+                        }
                     }
 
-                    Button {
-                        text: root.bridge && root.bridge.instrumentalMuted ? "恢复伴奏" : "伴奏静音"
-                        enabled: !(root.bridge && root.bridge.importBusy)
-                        Layout.preferredWidth: 118
-                        Layout.preferredHeight: 44
-                        onClicked: if (root.bridge) root.bridge.toggleInstrumentalMute()
-                    }
-
-                    Button {
-                        text: "真人唱功：关"
+                    IconButton {
+                        label: "↔"
+                        tip: "循环"
                         enabled: false
-                        Layout.preferredWidth: 138
-                        Layout.preferredHeight: 44
                     }
 
-                    Item { Layout.fillWidth: true }
-
-                    Button {
-                        text: "生成样例"
-                        enabled: !(root.bridge && root.bridge.importBusy)
-                        Layout.preferredWidth: 86
-                        onClicked: if (root.bridge) root.bridge.generateMockAudio()
+                    Rectangle {
+                        Layout.preferredWidth: 1
+                        Layout.preferredHeight: 66
+                        color: "#1e212c"
                     }
 
-                    Button {
-                        text: "生成歌词"
-                        enabled: !(root.bridge && root.bridge.importBusy)
-                        Layout.preferredWidth: 96
-                        onClicked: if (root.bridge) root.bridge.generateLyrics()
-                    }
-
-                    Button {
-                        text: "加载"
-                        enabled: !(root.bridge && root.bridge.importBusy)
-                        Layout.preferredWidth: 86
-                        onClicked: if (root.bridge) root.bridge.loadPlayback()
-                    }
-
-                    Button {
-                        text: "导出"
-                        enabled: !(root.bridge && root.bridge.importBusy)
-                        Layout.preferredWidth: 86
-                        onClicked: if (root.bridge) root.bridge.exportMix(toneSlider.value, masterSlider.value)
-                    }
-
-                    Button {
-                        text: "检测"
-                        enabled: !(root.bridge && root.bridge.importBusy)
-                        Layout.preferredWidth: 86
-                        onClicked: if (root.bridge) root.bridge.evaluateAlignment()
-                    }
-                }
-
-                GridLayout {
-                    Layout.fillWidth: true
-                    columns: 3
-                    rowSpacing: 16
-                    columnSpacing: 26
-
-                    DisabledControlRow {
-                        title: "歌词字体"
-                        valueText: "22px"
-                        Layout.fillWidth: true
-                    }
-
-                    DisabledControlRow {
-                        title: "歌词偏移"
-                        valueText: "2.2秒"
-                        Layout.fillWidth: true
-                    }
-
-                    SliderControlRow {
-                        title: "跑调强度"
-                        slider: toneSlider
-                        from: 0.0
-                        to: 1.0
-                        decimals: 0
-                        suffix: "%"
-                        multiplier: 100
-                        Layout.fillWidth: true
-                    }
-
-                    SliderControlRow {
-                        title: "人声"
+                    BottomSlider {
+                        title: "人声音轨"
+                        valueText: "100%"
                         slider: vocalGain
-                        from: 0.0
-                        to: 1.5
-                        decimals: 0
-                        suffix: "%"
-                        multiplier: 100
+                        muted: root.bridge ? root.bridge.vocalMuted : false
+                        muteClicked: function() { if (root.bridge) root.bridge.toggleVocalMute() }
                         Layout.fillWidth: true
                     }
 
-                    SliderControlRow {
-                        title: "伴奏"
+                    BottomSlider {
+                        title: "伴奏音轨"
+                        valueText: "80%"
                         slider: instGain
-                        from: 0.0
-                        to: 1.5
-                        decimals: 0
-                        suffix: "%"
-                        multiplier: 100
+                        muted: root.bridge ? root.bridge.instrumentalMuted : false
+                        muteClicked: function() { if (root.bridge) root.bridge.toggleInstrumentalMute() }
                         Layout.fillWidth: true
                     }
 
-                    SliderControlRow {
+                    BottomSlider {
                         title: "主输出"
+                        valueText: "90%"
                         slider: masterSlider
-                        from: -12.0
-                        to: 3.0
-                        decimals: 1
-                        suffix: " dB"
-                        Layout.fillWidth: true
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 10
-
-                    Text {
-                        text: "分离后端"
-                        color: root.textMuted
-                        font.pixelSize: 13
-                    }
-
-                    ComboBox {
-                        id: separatorPicker
-                        model: root.bridge ? root.bridge.separatorBackendLabels : []
-                        currentIndex: 0
-                        Layout.preferredWidth: 158
-                        onActivated: if (root.bridge) root.bridge.setSeparatorBackend(root.selectedSeparatorBackend())
-                    }
-
-                    Text {
-                        text: "歌词后端"
-                        color: root.textMuted
-                        font.pixelSize: 13
-                    }
-
-                    ComboBox {
-                        id: lyricsBackendPicker
-                        model: root.bridge ? root.bridge.lyricsBackendLabels : []
-                        currentIndex: 0
-                        Layout.preferredWidth: 150
-                        onActivated: if (root.bridge) root.bridge.setLyricsBackend(root.selectedLyricsBackend())
-                    }
-
-                    Text {
-                        text: root.bridge ? root.bridge.lyricsBackendStatus : ""
-                        color: root.gold
-                        font.pixelSize: 12
-                        elide: Text.ElideRight
-                        Layout.preferredWidth: 330
-                    }
-
-                    Text {
-                        text: "输出设备"
-                        color: root.textMuted
-                        font.pixelSize: 13
-                    }
-
-                    ComboBox {
-                        id: audioDevicePicker
-                        model: root.bridge ? root.bridge.audioDeviceNames : []
-                        currentIndex: root.bridge ? root.bridge.selectedAudioDeviceIndex : -1
-                        Layout.fillWidth: true
-                        onActivated: if (root.bridge) root.bridge.selectAudioDevice(index)
-                    }
-
-                    Button {
-                        text: "刷新设备"
-                        Layout.preferredWidth: 100
-                        onClicked: if (root.bridge) root.bridge.refreshAudioDevices()
-                    }
-
-                    Button {
-                        text: "选择导出"
-                        Layout.preferredWidth: 100
-                        onClicked: outputDialog.open()
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 10
-
-                    Text {
-                        text: "主输出 VST"
-                        color: root.textMuted
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: root.bridge && root.bridge.masterPluginPath ? root.bridge.masterPluginPath : "未加载；加载后仅在“导出”时生效"
-                        color: root.textMain
-                        font.pixelSize: 13
-                        elide: Text.ElideMiddle
+                        muted: false
+                        muteClicked: function() {}
                         Layout.fillWidth: true
                     }
 
-                    Button {
-                        text: "加载 VST"
-                        enabled: !(root.bridge && root.bridge.importBusy)
-                        Layout.preferredWidth: 100
+                    Rectangle {
+                        Layout.preferredWidth: 1
+                        Layout.preferredHeight: 66
+                        color: "#1e212c"
+                    }
+
+                    SecondaryButton {
+                        text: "VST 宿主"
+                        Layout.preferredWidth: 132
                         onClicked: vstPluginDialog.open()
                     }
 
-                    Button {
-                        text: "移除"
-                        enabled: root.bridge && root.bridge.masterPluginPath && !(root.bridge && root.bridge.importBusy)
-                        Layout.preferredWidth: 72
-                        onClicked: if (root.bridge) root.bridge.clearMasterPlugin()
+                    Rectangle {
+                        Layout.preferredWidth: 240
+                        Layout.preferredHeight: 58
+                        radius: 10
+                        color: "#151722"
+                        border.color: "#242839"
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 14
+                            anchors.rightMargin: 14
+                            anchors.topMargin: 8
+                            anchors.bottomMargin: 8
+                            spacing: 4
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text {
+                                    text: "跑调破坏度 (F0)"
+                                    color: root.accent2
+                                    font.pixelSize: 13
+                                    font.bold: true
+                                    Layout.fillWidth: true
+                                }
+                                Text {
+                                    text: root.bridge ? (Math.round(root.bridge.toneDeafRatio * 100) + "%") : "0%"
+                                    color: root.accent2
+                                    font.pixelSize: 13
+                                    font.bold: true
+                                }
+                            }
+                            Slider {
+                                id: toneVisualSlider
+                                from: 0.0
+                                to: 1.0
+                                value: toneSlider.value
+                                Layout.fillWidth: true
+                                onMoved: toneSlider.value = value
+                            }
+                        }
                     }
-                }
-
-                Text {
-                    text: root.bridge ? ("状态：" + root.bridge.status) : ""
-                    color: root.gold
-                    font.pixelSize: 13
-                    elide: Text.ElideMiddle
-                    Layout.fillWidth: true
-                }
-
-                Text {
-                    text: "使用提示：播放中拖动跑调强度会立刻换成新效果，长歌曲可能需要等几秒。要自动歌词，请先选歌词方式再点“生成歌词”。"
-                    color: root.textMuted
-                    font.pixelSize: 12
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
                 }
             }
 
@@ -695,7 +1106,7 @@ ApplicationWindow {
                 visible: false
                 from: 0.0
                 to: 1.5
-                value: 1.0
+                value: 0.8
                 onValueChanged: if (root.bridge) root.bridge.setTrackGains(vocalGain.value, value)
             }
 
@@ -709,117 +1120,143 @@ ApplicationWindow {
         }
     }
 
-    component LyricLine: Text {
-        property bool muted: false
-        property int size: 20
-        width: parent ? parent.width : 800
-        color: muted ? root.textMuted : root.textMain
-        font.pixelSize: size
-        horizontalAlignment: Text.AlignHCenter
-        elide: Text.ElideRight
-    }
-
-    component SliderControlRow: RowLayout {
-        property string title: ""
-        property Slider slider
-        property real from: 0.0
-        property real to: 1.0
-        property int decimals: 0
-        property real multiplier: 1.0
-        property string suffix: ""
-
-        function valueText() {
-            var shown = slider ? slider.value * multiplier : 0
-            return shown.toFixed(decimals) + suffix
+    component IconButton: Button {
+        property string label: ""
+        property string tip: ""
+        text: label
+        ToolTip.text: tip
+        ToolTip.visible: hovered && tip.length > 0
+        Layout.preferredWidth: 52
+        Layout.preferredHeight: 52
+        contentItem: Text {
+            text: parent.text
+            color: parent.enabled ? root.textMain : root.textDim
+            font.pixelSize: 20
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
         }
-
-        spacing: 10
-
-        Text {
-            text: title
-            color: root.textMain
-            font.pixelSize: 14
-            Layout.preferredWidth: 82
-        }
-
-        Slider {
-            id: visualSlider
-            Layout.fillWidth: true
-            Layout.preferredHeight: 22
-            from: parent.from
-            to: parent.to
-            value: parent.slider ? parent.slider.value : parent.from
-            onMoved: if (parent.slider) parent.slider.value = value
-
-            background: Rectangle {
-                x: visualSlider.leftPadding
-                y: visualSlider.topPadding + visualSlider.availableHeight / 2 - height / 2
-                width: visualSlider.availableWidth
-                height: 6
-                radius: 3
-                color: "#332b3a"
-
-                Rectangle {
-                    width: visualSlider.visualPosition * parent.width
-                    height: parent.height
-                    radius: 3
-                    color: root.accent
-                }
-            }
-
-            handle: Rectangle {
-                x: visualSlider.leftPadding + visualSlider.visualPosition * (visualSlider.availableWidth - width)
-                y: visualSlider.topPadding + visualSlider.availableHeight / 2 - height / 2
-                width: 16
-                height: 16
-                radius: 8
-                color: "#f8d7e1"
-                border.color: root.accent
-            }
-        }
-
-        Text {
-            text: valueText()
-            color: root.accent
-            font.pixelSize: 14
-            horizontalAlignment: Text.AlignRight
-            Layout.preferredWidth: 54
+        background: Rectangle {
+            radius: 10
+            color: parent.down ? "#242633" : "#14161f"
+            border.color: "#252936"
         }
     }
 
-    component DisabledControlRow: RowLayout {
+    component PrimaryButton: Button {
+        Layout.preferredHeight: 52
+        contentItem: Text {
+            text: parent.text
+            color: "white"
+            font.pixelSize: 15
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+        background: Rectangle {
+            radius: 8
+            color: parent.enabled ? (parent.down ? "#bf1d6d" : root.accent) : "#33313a"
+        }
+    }
+
+    component SecondaryButton: Button {
+        Layout.preferredHeight: 44
+        contentItem: Text {
+            text: parent.text
+            color: parent.enabled ? root.textMain : root.textDim
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+        background: Rectangle {
+            radius: 7
+            color: parent.down ? "#1c1f2b" : "#141720"
+            border.color: "#272b39"
+        }
+    }
+
+    component MiniButton: Button {
+        property bool active: false
+        Layout.preferredWidth: 84
+        Layout.preferredHeight: 60
+        contentItem: Text {
+            text: parent.text
+            color: parent.active ? root.accent2 : root.textMain
+            font.pixelSize: 15
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            wrapMode: Text.WordWrap
+        }
+        background: Rectangle {
+            radius: 8
+            color: parent.active ? "#2a0f23" : "#151721"
+            border.color: parent.active ? "#6d214b" : "#272b39"
+        }
+    }
+
+    component SettingsLabel: Text {
+        color: root.textMain
+        font.pixelSize: 14
+        font.bold: true
+        Layout.topMargin: 6
+        Layout.fillWidth: true
+    }
+
+    component BottomSlider: RowLayout {
         property string title: ""
         property string valueText: ""
-
+        property Slider slider
+        property bool muted: false
+        property var muteClicked
         spacing: 10
-
-        Text {
-            text: title
-            color: "#665d6a"
-            font.pixelSize: 14
-            Layout.preferredWidth: 82
-        }
-
-        Rectangle {
+        ColumnLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 6
-            radius: 3
-            color: "#2a2530"
-
-            Rectangle {
-                width: parent.width * 0.38
-                height: parent.height
-                radius: 3
-                color: "#5d5663"
+            spacing: 4
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    text: title
+                    color: root.accent2
+                    font.pixelSize: 13
+                    font.bold: true
+                    Layout.fillWidth: true
+                }
+                Text {
+                    text: valueText
+                    color: root.textMuted
+                    font.pixelSize: 12
+                }
             }
-        }
-
-        Text {
-            text: valueText
-            color: "#766d79"
-            font.pixelSize: 14
-            horizontalAlignment: Text.AlignRight
-            Layout.preferredWidth: 54
+            RowLayout {
+                Layout.fillWidth: true
+                Rectangle {
+                    Layout.preferredWidth: 34
+                    Layout.preferredHeight: 34
+                    radius: 6
+                    color: muted ? "#2a0f23" : "#161925"
+                    border.color: "#222638"
+                    Text {
+                        anchors.centerIn: parent
+                        text: "M"
+                        color: muted ? root.accent2 : root.textMain
+                        font.bold: true
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: muteClicked()
+                    }
+                }
+                Slider {
+                    Layout.fillWidth: true
+                    from: slider ? slider.from : 0
+                    to: slider ? slider.to : 1
+                    value: slider ? slider.value : 0
+                    onMoved: if (slider) slider.value = value
+                }
+            }
         }
     }
 }
