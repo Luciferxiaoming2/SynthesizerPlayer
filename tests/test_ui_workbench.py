@@ -354,6 +354,55 @@ def test_workbench_bridge_builds_mp3_encoder_only_for_mp3(tmp_path, monkeypatch)
     assert bridge._build_mp3_encoder(tmp_path / "mix.mp3") is not None
 
 
+def test_right_panel_preset_updates_separator_backend(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+
+    bridge.setRightPanelPreset(1)
+
+    assert bridge.separatorBackend == "demucs"
+    assert bridge.rightPanelPresetIndex == 1
+    assert "极致消除" in bridge.status
+
+    bridge.setRightPanelPreset(0)
+
+    assert bridge.separatorBackend == "preview"
+    assert bridge.rightPanelPresetIndex == 0
+    assert "标准人声" in bridge.status
+
+
+def test_right_panel_status_reflects_loaded_audio_and_diagnostics(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+
+    assert bridge.sampleRateLabel == "未加载"
+    assert bridge.toneMonitorStatus == "请先导入或加载歌曲"
+    assert bridge.alignmentLatencyStatus == "未检测"
+
+    bridge.generateMockAudio()
+
+    assert bridge.sampleRateLabel == "16kHz"
+    assert "跑调" in bridge.toneMonitorStatus
+
+    bridge.evaluateAlignment()
+
+    assert "ms" in bridge.alignmentLatencyStatus
+    assert "未检测" not in bridge.alignmentLatencyStatus
+
+
+def test_right_panel_plugin_and_lyrics_status_are_chinese(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+
+    assert bridge.masterPluginStatus == "未加载 VST"
+    assert bridge.lyricsEngineStatus == "占位提示"
+
+    plugin = tmp_path / "demo.vst3"
+    plugin.write_text("fake", encoding="utf-8")
+    bridge.setMasterPluginFromUrl(plugin.as_uri())
+    bridge.setLyricsBackend("none")
+
+    assert bridge.masterPluginStatus == "已加载：demo.vst3"
+    assert bridge.lyricsEngineStatus == "不生成歌词"
+
+
 def test_backend_labels_are_chinese_for_ui():
     assert separator_backend_label("preview") == "快速预览"
     assert separator_backend_label("demucs") == "Demucs 人声分离"

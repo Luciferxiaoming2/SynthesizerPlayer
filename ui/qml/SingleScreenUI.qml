@@ -654,7 +654,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                     }
                     Text {
-                        text: "48kHz"
+                        text: root.bridge ? root.bridge.sampleRateLabel : "未加载"
                         color: root.textMuted
                         font.pixelSize: 12
                     }
@@ -702,7 +702,7 @@ ApplicationWindow {
                             }
                         }
                         Text {
-                            text: "音高捕捉平稳"
+                            text: root.bridge ? root.bridge.toneMonitorStatus : "请先导入或加载歌曲"
                             color: root.textMuted
                             font.pixelSize: 13
                             horizontalAlignment: Text.AlignHCenter
@@ -739,25 +739,34 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             radius: 6
-                            color: root.accent
+                            color: root.bridge && root.bridge.rightPanelPresetIndex === 0 ? root.accent : "transparent"
                             Text {
                                 anchors.centerIn: parent
                                 text: "标准人声"
-                                color: "white"
+                                color: root.bridge && root.bridge.rightPanelPresetIndex === 0 ? "white" : root.textMuted
                                 font.pixelSize: 14
                                 font.bold: true
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: if (root.bridge) root.bridge.setRightPanelPreset(0)
                             }
                         }
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             radius: 6
-                            color: "transparent"
+                            color: root.bridge && root.bridge.rightPanelPresetIndex === 1 ? root.accent : "transparent"
                             Text {
                                 anchors.centerIn: parent
                                 text: "极致消除"
-                                color: root.textMuted
+                                color: root.bridge && root.bridge.rightPanelPresetIndex === 1 ? "white" : root.textMuted
                                 font.pixelSize: 14
+                                font.bold: root.bridge && root.bridge.rightPanelPresetIndex === 1
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: if (root.bridge) root.bridge.setRightPanelPreset(1)
                             }
                         }
                     }
@@ -776,7 +785,7 @@ ApplicationWindow {
                         anchors.margins: 16
                         Text {
                             text: "AI 自动修补原唱"
-                            color: root.textMain
+                            color: root.textDim
                             font.pixelSize: 16
                             font.bold: true
                             Layout.fillWidth: true
@@ -792,7 +801,7 @@ ApplicationWindow {
                         anchors.top: parent.top
                         anchors.topMargin: 54
                         anchors.margins: 16
-                        text: "开启后，AI 自动分析原唱边界处声学特征，对音色跃迁和机械感做柔化。"
+                        text: "实验功能暂未接入真实模型，当前不会影响播放或导出。后续确认可交付方案后再开放。"
                         color: root.textMuted
                         font.pixelSize: 12
                         wrapMode: Text.WordWrap
@@ -807,13 +816,13 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         Text {
-                            text: "ASIO 驱动就绪:"
+                            text: "输出引擎:"
                             color: root.textMuted
                             font.pixelSize: 13
                             Layout.fillWidth: true
                         }
                         Text {
-                            text: root.bridge && root.bridge.audioOutputActive ? "TRUE" : "IDLE"
+                            text: root.bridge ? root.bridge.outputEngineStatus : "未就绪"
                             color: root.accent2
                             font.pixelSize: 13
                             font.bold: true
@@ -822,14 +831,45 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         Text {
-                            text: "系统播放延迟:"
+                            text: "对齐检测:"
                             color: root.textMuted
                             font.pixelSize: 13
                             Layout.fillWidth: true
                         }
                         Text {
-                            text: "12ms（无感）"
+                            text: root.bridge ? root.bridge.alignmentLatencyStatus : "未检测"
                             color: root.teal
+                            font.pixelSize: 13
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "VST 状态:"
+                            color: root.textMuted
+                            font.pixelSize: 13
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            text: root.bridge ? root.bridge.masterPluginStatus : "未加载"
+                            color: root.textMuted
+                            font.pixelSize: 13
+                            elide: Text.ElideRight
+                            Layout.preferredWidth: 180
+                            horizontalAlignment: Text.AlignRight
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "歌词引擎:"
+                            color: root.textMuted
+                            font.pixelSize: 13
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            text: root.bridge ? root.bridge.lyricsEngineStatus : "未选择"
+                            color: root.textMuted
                             font.pixelSize: 13
                         }
                     }

@@ -144,6 +144,8 @@ class WorkbenchBridge(QObject):
         self._current_lyric = ""
         self._next_lyric = ""
         self._tone_deaf_ratio = 0.4
+        self._last_alignment_latency_ms: float | None = None
+        self._last_alignment_passed: bool | None = None
         self._tone_deaf_cache = ToneDeafBufferCache()
         self._playback_timer = QTimer(self)
         self._playback_timer.setInterval(100)
@@ -324,6 +326,53 @@ class WorkbenchBridge(QObject):
     def toneDeafRatio(self) -> float:
         return self._tone_deaf_ratio
 
+    @pyqtProperty(int, notify=importOptionsChanged)
+    def rightPanelPresetIndex(self) -> int:
+        return 1 if self._separator_backend == "demucs" else 0
+
+    @pyqtProperty(str, notify=playbackChanged)
+    def sampleRateLabel(self) -> str:
+        if self._playback is None:
+            return "未加载"
+        return f"{round(self._playback.buffers.sample_rate / 1000)}kHz"
+
+    @pyqtProperty(str, notify=playbackChanged)
+    def toneMonitorStatus(self) -> str:
+        if self._playback is None:
+            return "请先导入或加载歌曲"
+        if self._tone_deaf_ratio <= 0.01:
+            return "原声稳定"
+        if self._tone_deaf_ratio < 0.35:
+            return "轻微跑调预览中"
+        if self._tone_deaf_ratio < 0.7:
+            return "明显跑调已应用"
+        return "强跑调已应用，注意音量"
+
+    @pyqtProperty(str, notify=playbackChanged)
+    def alignmentLatencyStatus(self) -> str:
+        if self._last_alignment_latency_ms is None:
+            return "未检测"
+        status = "通过" if self._last_alignment_passed else "需检查"
+        return f"{self._last_alignment_latency_ms:.2f}ms（{status}）"
+
+    @pyqtProperty(str, notify=playbackChanged)
+    def outputEngineStatus(self) -> str:
+        if self._audio_output_active:
+            return "播放中"
+        if self._audio_devices:
+            return "已就绪"
+        return "未检测到设备"
+
+    @pyqtProperty(str, notify=pathsChanged)
+    def masterPluginStatus(self) -> str:
+        if not self._master_plugin_paths:
+            return "未加载 VST"
+        return f"已加载：{self._master_plugin_paths[-1].name}"
+
+    @pyqtProperty(str, notify=importOptionsChanged)
+    def lyricsEngineStatus(self) -> str:
+        return lyrics_backend_label(self._lyrics_backend)
+
     @pyqtSlot()
     def generateMockAudio(self) -> None:
         try:
@@ -483,6 +532,15 @@ class WorkbenchBridge(QObject):
                 self._set_status(f"已应用跑调强度：{round(self._tone_deaf_ratio * 100)}%")
         except Exception:
             self._set_status(f"跑调处理失败：{traceback.format_exc(limit=1).strip()}")
+
+    @pyqtSlot(int)
+    def setRightPanelPreset(self, index: int) -> None:
+        if index == 1:
+            self.setSeparatorBackend("demucs")
+            self._set_status("右栏预设已切换为“极致消除”：下一次导入会使用 Demucs 人声分离")
+            return
+        self.setSeparatorBackend("preview")
+        self._set_status("右栏预设已切换为“标准人声”：下一次导入会使用快速预览分离")
 
     @pyqtSlot(str)
     def setMasterPluginFromUrl(self, url: str) -> None:
@@ -861,10 +919,13 @@ class WorkbenchBridge(QObject):
                 tolerance_ms=5.0,
             )
             status = "通过" if result.passed else "需检查"
+            self._last_alignment_latency_ms = result.latency_seconds * 1000.0
+            self._last_alignment_passed = result.passed
             self._set_status(
-                f"对齐检测{status}：延迟={result.latency_seconds * 1000.0:.2f}ms，"
+                f"对齐检测{status}：延迟={self._last_alignment_latency_ms:.2f}ms，"
                 f"得分={result.score:.3f}"
             )
+            self.playbackChanged.emit()
         except Exception:
             self._set_status(traceback.format_exc(limit=1).strip())
 
