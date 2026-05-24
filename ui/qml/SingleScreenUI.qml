@@ -1229,8 +1229,8 @@ ApplicationWindow {
                     }
 
                     BottomSlider {
-                        title: "人声音轨"
-                        valueText: "100%"
+                        title: "人声音量"
+                        valueText: Math.round(vocalGain.value * 100) + "%"
                         slider: vocalGain
                         muted: root.bridge ? root.bridge.vocalMuted : false
                         muteClicked: function() { if (root.bridge) root.bridge.toggleVocalMute() }
@@ -1238,8 +1238,8 @@ ApplicationWindow {
                     }
 
                     BottomSlider {
-                        title: "伴奏音轨"
-                        valueText: "80%"
+                        title: "伴奏音量"
+                        valueText: Math.round(instGain.value * 100) + "%"
                         slider: instGain
                         muted: root.bridge ? root.bridge.instrumentalMuted : false
                         muteClicked: function() { if (root.bridge) root.bridge.toggleInstrumentalMute() }
@@ -1247,8 +1247,8 @@ ApplicationWindow {
                     }
 
                     BottomSlider {
-                        title: "主输出"
-                        valueText: "90%"
+                        title: "主输出增益"
+                        valueText: masterSlider.value.toFixed(1) + "dB"
                         slider: masterSlider
                         muted: false
                         muteClicked: function() {}
@@ -1479,9 +1479,10 @@ ApplicationWindow {
                     border.color: "#222638"
                     Text {
                         anchors.centerIn: parent
-                        text: "M"
+                        text: muted ? "已静" : "静"
                         color: muted ? root.accent2 : root.textMain
                         font.bold: true
+                        font.pixelSize: 13
                     }
                     MouseArea {
                         anchors.fill: parent
