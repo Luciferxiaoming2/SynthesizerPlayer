@@ -344,6 +344,16 @@ def test_workbench_bridge_reports_busy_import_guard(tmp_path):
     assert bridge.status == "歌曲正在导入中，请稍等"
 
 
+def test_workbench_bridge_builds_mp3_encoder_only_for_mp3(tmp_path, monkeypatch):
+    bridge = WorkbenchBridge(tmp_path)
+    fake_ffmpeg = tmp_path / "ffmpeg.exe"
+    fake_ffmpeg.write_text("fake", encoding="utf-8")
+    monkeypatch.setattr("ui.main_window.resolve_audio_tool", lambda _name, _root: str(fake_ffmpeg))
+
+    assert bridge._build_mp3_encoder(tmp_path / "mix.wav") is None
+    assert bridge._build_mp3_encoder(tmp_path / "mix.mp3") is not None
+
+
 def test_backend_labels_are_chinese_for_ui():
     assert separator_backend_label("preview") == "快速预览"
     assert separator_backend_label("demucs") == "Demucs 人声分离"

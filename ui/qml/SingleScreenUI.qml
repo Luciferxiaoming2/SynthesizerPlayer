@@ -60,9 +60,9 @@ ApplicationWindow {
 
     FileDialog {
         id: outputDialog
-        title: "选择导出 wav"
+        title: "选择导出文件"
         fileMode: FileDialog.SaveFile
-        nameFilters: ["Wave 文件 (*.wav)"]
+        nameFilters: ["MP3 文件 (*.mp3)", "Wave 文件 (*.wav)"]
         onAccepted: if (root.bridge) root.bridge.setPathFromUrl("output", selectedFile.toString())
     }
 

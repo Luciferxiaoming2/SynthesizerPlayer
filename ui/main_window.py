@@ -11,7 +11,13 @@ from PyQt6.QtCore import QCoreApplication, QObject, QThread, QTimer, QUrl, pyqtP
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQml import QQmlApplicationEngine
 
-from core_engine.external_tools import FfmpegAudioStandardizer, FfmpegConfig, resolve_audio_tool
+from core_engine.external_tools import (
+    FfmpegAudioStandardizer,
+    FfmpegConfig,
+    FfmpegMp3Config,
+    FfmpegMp3Encoder,
+    resolve_audio_tool,
+)
 from core_engine.dsp.tone_deaf import ToneDeafConfig
 from core_engine.dsp.tone_deaf_cache import ToneDeafBufferCache
 from core_engine.exporter.audio_export import AudioExportConfig, export_processed_mix
@@ -833,6 +839,7 @@ class WorkbenchBridge(QObject):
                     tone_deaf_ratio=tone_deaf_ratio,
                     master_gain_db=master_gain_db,
                     master_plugins=list(self._master_plugin_paths),
+                    mp3_encoder=self._build_mp3_encoder(self._output_path),
                 )
             )
             self._set_status(
@@ -840,7 +847,7 @@ class WorkbenchBridge(QObject):
                 f"（{result.duration_seconds:.2f} 秒 / {result.sample_rate} Hz）"
             )
         except Exception:
-            self._set_status(traceback.format_exc(limit=1).strip())
+            self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
 
     @pyqtSlot()
     def evaluateAlignment(self) -> None:
@@ -1086,6 +1093,12 @@ class WorkbenchBridge(QObject):
         except FileNotFoundError:
             return None
         return FfmpegAudioStandardizer(FfmpegConfig(executable=ffmpeg))
+
+    def _build_mp3_encoder(self, output_path: Path) -> FfmpegMp3Encoder | None:
+        if output_path.suffix.lower() != ".mp3":
+            return None
+        ffmpeg = resolve_audio_tool("ffmpeg", self._root)
+        return FfmpegMp3Encoder(FfmpegMp3Config(executable=ffmpeg))
 
     def _set_status(self, value: str) -> None:
         self._status = value

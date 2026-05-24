@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from core_engine.exporter.audio_export import AudioExportConfig, export_processed_mix
 from core_engine.player.sync_buffer import read_audio, write_audio
@@ -55,3 +56,16 @@ def test_export_processed_mix_supports_tone_deaf(tmp_path):
     assert result.frame_count == 2_000
     assert output_path.exists()
 
+
+def test_export_processed_mix_requires_encoder_for_mp3(tmp_path):
+    vocal_path, instrumental_path = write_stem_pair(tmp_path)
+    output_path = tmp_path / "mix.mp3"
+
+    with pytest.raises(RuntimeError, match="mp3 export requires ffmpeg"):
+        export_processed_mix(
+            AudioExportConfig(
+                vocal_path=vocal_path,
+                instrumental_path=instrumental_path,
+                output_path=output_path,
+            )
+        )

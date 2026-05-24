@@ -2,10 +2,12 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import tempfile
 
 from core_engine.dsp.tone_deaf import ToneDeafConfig
 from core_engine.dsp.tone_deaf_cache import ToneDeafBufferCache
 from core_engine.dsp.vst_host import OfflineEffectConfig, VstEffectChain
+from core_engine.external_tools import FfmpegMp3Encoder
 from core_engine.player.sync_buffer import (
     StereoTrackBuffer,
     load_stem_pair,
@@ -29,6 +31,7 @@ class AudioExportConfig:
     vocal_plugins: list[Path] = field(default_factory=list)
     instrumental_plugins: list[Path] = field(default_factory=list)
     master_plugins: list[Path] = field(default_factory=list)
+    mp3_encoder: FfmpegMp3Encoder | None = None
 
 
 @dataclass(frozen=True)
@@ -80,9 +83,18 @@ def export_processed_mix(config: AudioExportConfig) -> AudioExportResult:
     )
 
     config.output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_audio(config.output_path, mixed, buffers.sample_rate)
+    output_path = config.output_path
+    if output_path.suffix.lower() == ".mp3":
+        if config.mp3_encoder is None:
+            raise RuntimeError("mp3 export requires ffmpeg")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            wav_path = Path(tmp_dir) / "mix.wav"
+            write_audio(wav_path, mixed, buffers.sample_rate)
+            config.mp3_encoder.encode(wav_path, output_path)
+    else:
+        write_audio(output_path, mixed, buffers.sample_rate)
     return AudioExportResult(
-        output_path=config.output_path,
+        output_path=output_path,
         frame_count=mixed.shape[0],
         sample_rate=buffers.sample_rate,
         duration_seconds=buffers.duration_seconds,
@@ -99,4 +111,3 @@ def process_effect_chain(
     for plugin_path in plugin_paths:
         chain.add_plugin(plugin_path)
     return chain.process(audio, sample_rate)
-

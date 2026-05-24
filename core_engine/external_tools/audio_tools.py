@@ -95,6 +95,42 @@ class FfmpegAudioStandardizer:
 
 
 @dataclass(frozen=True)
+class FfmpegMp3Config:
+    executable: str = "ffmpeg"
+    bitrate: str = "192k"
+
+
+class FfmpegMp3Encoder:
+    """Encode an exported wav mix to mp3 with ffmpeg."""
+
+    def __init__(self, config: FfmpegMp3Config | None = None) -> None:
+        self._config = config or FfmpegMp3Config()
+
+    def encode(self, source_path: Path, output_path: Path) -> Path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(self._command(source_path, output_path), check=True)
+        if not output_path.exists():
+            raise FileNotFoundError(f"ffmpeg did not create {output_path}")
+        return output_path
+
+    def _command(self, source_path: Path, output_path: Path) -> list[str]:
+        return [
+            self._config.executable,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source_path),
+            "-codec:a",
+            "libmp3lame",
+            "-b:a",
+            self._config.bitrate,
+            str(output_path),
+        ]
+
+
+@dataclass(frozen=True)
 class RubberbandConfig:
     executable: str = "rubberband"
     pitch_semitones: float = 0.0
