@@ -7,10 +7,10 @@ Audio Forge 是从旧版 Synthesizer Player 业务逻辑迁移出来的本地音
 - 界面：中文单屏 K 歌风格 UI，支持暗色界面。
 - 歌曲导入：支持 `wav/mp3/flac/ogg/m4a/aac` 等常见音频格式。
 - 歌曲库：可扫描普通音乐文件夹，也可识别人声/伴奏双轨工程目录。
-- 播放：支持真实音频输出、无声预览、进度拖动、人声/伴奏静音、音量调节。
+- 播放：支持真实音频输出、无声预览、进度拖动、人声/伴奏静音、音量调节和跑调预览。
 - 歌词：支持 `.lrc/.srt`，播放时滚动高亮；英文歌曲会保留英文歌词。
 - 生成歌词：提供“占位提示”和可选“本地识别”两种方式。
-- 导出：可导出混音 wav，主输出 VST 目前在导出时生效。
+- 导出：可导出混音 wav，跑调强度会写入导出结果，主输出 VST 目前在导出时生效。
 - 打包：已支持 PyInstaller 生成便携版 exe。
 
 ## 直接运行便携版
@@ -77,6 +77,12 @@ powershell -ExecutionPolicy Bypass -File scripts\packaging\build_windows_ui.ps1
 D:\uv\venvs\audio_forge\Scripts\python.exe -m harness.cli_harness.generate_mock_audio --output-dir harness\mock_data
 ```
 
+生成明显跑调的人声：
+
+```powershell
+D:\uv\venvs\audio_forge\Scripts\python.exe -m harness.cli_harness.run_pitch_shift --input harness\mock_data\vocal.wav --output harness\mock_data\vocal_tone_deaf.wav --ratio 0.8
+```
+
 导入单首歌曲：
 
 ```powershell
@@ -111,5 +117,6 @@ D:\uv\venvs\audio_forge\Scripts\python.exe -m harness.cli_harness.import_song --
 
 - 仓库只提交业务代码、测试和文档；音频文件、模型、打包结果、导入工程和 harness 规范文件都已放入 `.gitignore`。
 - 当前“真人唱功/改词唱”仍是实验性适配层，不是完整商业模型效果。
+- “跑调强度”会影响播放和导出；长歌曲拖动滑杆后重新处理人声可能需要等待几秒。
 - VST 加载目前用于离线导出，不是实时播放链路。
 - 如播放无声，请在界面右下角刷新输出设备，并选择当前耳机或扬声器。

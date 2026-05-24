@@ -664,7 +664,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: "使用提示：先“导入歌曲”或“生成样例”，再点“播放”。要自动歌词，请先选“占位提示”或安装 faster-whisper 后选“本地识别”，再点“生成歌词”。"
+                    text: "使用提示：跑调强度会影响播放和导出；拖动后会重新处理当前人声，长歌曲可能需要等几秒。要自动歌词，请先选歌词方式再点“生成歌词”。"
                     color: root.textMuted
                     font.pixelSize: 12
                     elide: Text.ElideRight
@@ -678,6 +678,7 @@ ApplicationWindow {
                 from: 0.0
                 to: 1.0
                 value: 0.4
+                onValueChanged: if (root.bridge) root.bridge.setToneDeafRatio(value)
             }
 
             Slider {

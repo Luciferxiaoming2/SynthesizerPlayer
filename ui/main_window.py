@@ -12,6 +12,8 @@ from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQml import QQmlApplicationEngine
 
 from core_engine.external_tools import FfmpegAudioStandardizer, FfmpegConfig, resolve_audio_tool
+from core_engine.dsp.tone_deaf import ToneDeafConfig
+from core_engine.dsp.tone_deaf_cache import ToneDeafBufferCache
 from core_engine.exporter.audio_export import AudioExportConfig, export_processed_mix
 from core_engine.importer import SongImportConfig, import_single_song
 from core_engine.library.song_scanner import SongAsset, scan_song_library
@@ -101,6 +103,8 @@ class WorkbenchBridge(QObject):
         self._current_lyric_index = -1
         self._current_lyric = ""
         self._next_lyric = ""
+        self._tone_deaf_ratio = 0.4
+        self._tone_deaf_cache = ToneDeafBufferCache()
         self._playback_timer = QTimer(self)
         self._playback_timer.setInterval(100)
         self._playback_timer.timeout.connect(self.advancePlayback)
@@ -262,6 +266,10 @@ class WorkbenchBridge(QObject):
     def currentLyricIndex(self) -> int:
         return self._current_lyric_index
 
+    @pyqtProperty(float, notify=playbackChanged)
+    def toneDeafRatio(self) -> float:
+        return self._tone_deaf_ratio
+
     @pyqtSlot()
     def generateMockAudio(self) -> None:
         try:
@@ -282,13 +290,15 @@ class WorkbenchBridge(QObject):
     @pyqtSlot()
     def loadPlayback(self) -> None:
         try:
-            self._playback = DualTrackPlaybackEngine(load_stem_pair(self._vocal_path, self._instrumental_path))
+            buffers = self._build_playback_buffers()
+            self._playback = DualTrackPlaybackEngine(buffers)
             timeline = load_lyrics_timeline(self._lyrics_path)
             self._lyrics_sync = LyricPlaybackSynchronizer(timeline)
             self._lyric_lines = timeline.texts()
             self._update_lyrics()
             self.playbackChanged.emit()
-            self._set_status("音频已加载，可以点击“播放”试听")
+            tone_text = "，已应用跑调" if self._tone_deaf_ratio > 0.01 else ""
+            self._set_status(f"音频已加载{tone_text}，可以点击“播放”试听")
         except Exception:
             self._set_status(traceback.format_exc(limit=1).strip())
 
@@ -397,6 +407,29 @@ class WorkbenchBridge(QObject):
             return
         self._playback.set_gains(vocal_gain=vocal_gain, instrumental_gain=instrumental_gain)
         self.playbackChanged.emit()
+
+    @pyqtSlot(float)
+    def setToneDeafRatio(self, ratio: float) -> None:
+        self._tone_deaf_ratio = max(0.0, min(1.0, float(ratio)))
+        if self._playback is None:
+            self._set_status("已设置跑调强度；导入、加载或导出时生效")
+            self.playbackChanged.emit()
+            return
+
+        was_playing = self._playback.is_playing
+        position = self._playback.position_frames
+        controls = self._playback.controls
+        try:
+            self._stop_audio_output(reset_engine=False)
+            buffers = self._build_playback_buffers()
+            self._playback = DualTrackPlaybackEngine(buffers, controls)
+            self._playback.seek_frames(position)
+            if was_playing:
+                self._playback.play()
+            self.playbackChanged.emit()
+            self._set_status(f"已应用跑调强度：{round(self._tone_deaf_ratio * 100)}%")
+        except Exception:
+            self._set_status(f"跑调处理失败：{traceback.format_exc(limit=1).strip()}")
 
     @pyqtSlot(str)
     def setMasterPluginFromUrl(self, url: str) -> None:
@@ -740,6 +773,18 @@ class WorkbenchBridge(QObject):
         if self._selected_audio_device_index >= len(self._audio_devices):
             return None
         return self._audio_devices[self._selected_audio_device_index].id
+
+    def _build_playback_buffers(self):
+        buffers = load_stem_pair(self._vocal_path, self._instrumental_path)
+        if self._tone_deaf_ratio <= 0.01:
+            return buffers
+        return self._tone_deaf_cache.render_buffer(
+            buffers,
+            ToneDeafConfig(
+                drift_ratio=self._tone_deaf_ratio,
+                random_seed=7,
+            ),
+        )
 
     def _build_import_config(
         self, source_path: Path, separator_backend: str, lyrics_backend: str

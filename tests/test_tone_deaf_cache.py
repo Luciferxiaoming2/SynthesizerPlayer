@@ -26,6 +26,18 @@ def test_tone_deaf_cache_reuses_rendered_vocal():
     np.testing.assert_allclose(first, second)
 
 
+def test_tone_deaf_cache_separates_same_length_sources():
+    first_buffers = make_buffers()
+    second_buffers = first_buffers.with_vocal(first_buffers.vocal * 0.5)
+    cache = ToneDeafBufferCache()
+    config = ToneDeafConfig(drift_ratio=0.4, random_seed=3)
+
+    cache.render_vocal(first_buffers, config)
+    cache.render_vocal(second_buffers, config)
+
+    assert cache.size == 2
+
+
 def test_tone_deaf_render_buffer_preserves_alignment():
     buffers = make_buffers()
     rendered = ToneDeafBufferCache().render_buffer(
@@ -51,4 +63,3 @@ def test_playback_engine_can_replace_buffers_keep_position():
 
     assert engine.position_frames == 100
     assert engine.buffers is rendered
-

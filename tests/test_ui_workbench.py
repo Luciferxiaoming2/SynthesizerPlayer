@@ -43,6 +43,20 @@ def test_workbench_bridge_playback_and_lyrics_state(tmp_path):
     assert bridge.playbackProgress == 0.0
 
 
+def test_workbench_bridge_applies_tone_deaf_to_loaded_playback(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+
+    bridge.generateMockAudio()
+    before = bridge._playback.buffers.vocal.copy()
+    bridge.setToneDeafRatio(0.8)
+
+    assert bridge.toneDeafRatio == 0.8
+    assert bridge._playback is not None
+    assert bridge._playback.buffers.vocal.shape == before.shape
+    assert float(abs(bridge._playback.buffers.vocal - before).mean()) > 0.0001
+    assert "已应用跑调强度" in bridge.status
+
+
 def test_workbench_bridge_toggles_track_mutes(tmp_path):
     bridge = WorkbenchBridge(tmp_path)
     bridge.generateMockAudio()

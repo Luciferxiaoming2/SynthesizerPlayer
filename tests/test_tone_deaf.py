@@ -47,4 +47,4 @@ def test_generate_drift_curve_is_deterministic_and_bounded():
     second = generate_drift_curve(f0_track, config)
 
     np.testing.assert_allclose(first.cents, second.cents)
-    assert float(np.max(np.abs(first.cents))) <= 160.0
+    assert float(np.max(np.abs(first.cents))) <= 360.0

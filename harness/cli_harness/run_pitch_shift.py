@@ -8,11 +8,11 @@ from core_engine.player.sync_buffer import read_audio, write_audio
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Render tone-deaf vocal drift offline.")
-    parser.add_argument("--input", required=True, type=Path, help="Input vocal wav path.")
-    parser.add_argument("--output", required=True, type=Path, help="Rendered wav path.")
-    parser.add_argument("--ratio", required=True, type=float, help="Drift ratio from 0.01 to 0.80.")
-    parser.add_argument("--seed", type=int, default=7, help="Deterministic random seed.")
+    parser = argparse.ArgumentParser(description="离线渲染明显跑调的人声音轨。")
+    parser.add_argument("--input", required=True, type=Path, help="输入人声 wav 路径。")
+    parser.add_argument("--output", required=True, type=Path, help="输出 wav 路径。")
+    parser.add_argument("--ratio", required=True, type=float, help="跑调强度，范围 0.0 到 1.0。")
+    parser.add_argument("--seed", type=int, default=7, help="固定随机种子，便于复现。")
     return parser
 
 

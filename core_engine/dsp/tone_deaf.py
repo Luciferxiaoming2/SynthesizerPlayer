@@ -13,14 +13,18 @@ class ToneDeafConfig:
     hop_ms: float = 20.0
     min_f0_hz: float = 70.0
     max_f0_hz: float = 900.0
+    max_drift_cents: float = 720.0
+    wobble_hz: float = 3.2
 
     def __post_init__(self) -> None:
-        if not 0.01 <= self.drift_ratio <= 0.80:
-            raise ValueError("drift_ratio must be between 0.01 and 0.80")
+        if not 0.0 <= self.drift_ratio <= 1.0:
+            raise ValueError("drift_ratio must be between 0.0 and 1.0")
         if self.frame_ms <= 0.0 or self.hop_ms <= 0.0:
             raise ValueError("frame_ms and hop_ms must be positive")
         if self.min_f0_hz <= 0.0 or self.max_f0_hz <= self.min_f0_hz:
             raise ValueError("invalid F0 range")
+        if self.max_drift_cents <= 0.0 or self.wobble_hz < 0.0:
+            raise ValueError("invalid tone-deaf drift settings")
 
 
 @dataclass(frozen=True)
@@ -161,20 +165,53 @@ def generate_drift_curve(f0_track: F0Track, config: ToneDeafConfig) -> DriftCurv
             cents=np.asarray([0.0], dtype=np.float32),
         )
 
-    max_cents = 320.0 * config.drift_ratio
-    random_steps = rng.normal(0.0, max_cents * 0.18, size=f0_track.times_seconds.size)
+    max_cents = config.max_drift_cents * config.drift_ratio
+    if max_cents <= 1e-6:
+        return DriftCurve(
+            times_seconds=f0_track.times_seconds,
+            cents=np.zeros_like(f0_track.times_seconds, dtype=np.float32),
+        )
+
+    random_steps = rng.normal(0.0, max_cents * 0.24, size=f0_track.times_seconds.size)
     random_walk = np.cumsum(random_steps)
     if random_walk.size > 0:
         random_walk -= float(np.mean(random_walk))
-    wander = np.sin(np.arange(f0_track.times_seconds.size, dtype=np.float32) * 0.31) * max_cents * 0.35
-    confidence_weight = np.clip(f0_track.confidence, 0.0, 1.0)
-    cents = (random_walk + wander) * confidence_weight
-    cents = smooth_curve(cents, window_size=9)
+    times = f0_track.times_seconds.astype(np.float32)
+    slow_wander = np.sin(times * np.pi * 2.0 * 0.55) * max_cents * 0.38
+    nervous_wobble = np.sin(times * np.pi * 2.0 * config.wobble_hz) * max_cents * 0.16
+    phrase_steps = stepped_phrase_offsets(times, max_cents, rng)
+    active_weight = np.where(
+        f0_track.frequencies_hz > 0.0,
+        np.clip(f0_track.confidence, 0.35, 1.0),
+        0.0,
+    )
+    cents = (random_walk + slow_wander + nervous_wobble + phrase_steps) * active_weight
+    cents = smooth_curve(cents, window_size=5)
     cents = np.clip(cents, -max_cents, max_cents)
     return DriftCurve(
         times_seconds=f0_track.times_seconds,
         cents=np.asarray(cents, dtype=np.float32),
     )
+
+
+def stepped_phrase_offsets(times_seconds: np.ndarray, max_cents: float, rng: np.random.Generator) -> np.ndarray:
+    """Generate phrase-level wrong-note jumps so the effect is easy to hear."""
+
+    if times_seconds.size == 0:
+        return np.asarray([], dtype=np.float32)
+
+    offsets = np.zeros(times_seconds.size, dtype=np.float32)
+    phrase_seconds = 0.42
+    current_bucket = None
+    current_offset = 0.0
+    for index, time_seconds in enumerate(times_seconds):
+        bucket = int(float(time_seconds) / phrase_seconds)
+        if bucket != current_bucket:
+            current_bucket = bucket
+            direction = -1.0 if bucket % 2 else 1.0
+            current_offset = direction * rng.uniform(max_cents * 0.20, max_cents * 0.55)
+        offsets[index] = current_offset
+    return offsets
 
 
 def drift_cents_at(curve: DriftCurve, time_seconds: float) -> float:
