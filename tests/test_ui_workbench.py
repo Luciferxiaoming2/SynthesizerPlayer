@@ -591,6 +591,13 @@ def test_resolve_demucs_python_prefers_configured_env(tmp_path, monkeypatch):
     assert resolve_demucs_python(tmp_path) == "D:/tools/python.exe"
 
 
+def test_resolve_demucs_python_uses_config_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("AUDIO_FORGE_DEMUCS_PYTHON", raising=False)
+    (tmp_path / "demucs_python.txt").write_text('"D:/uv/venvs/audio_forge/Scripts/python.exe"', encoding="utf-8")
+
+    assert resolve_demucs_python(tmp_path) == "D:/uv/venvs/audio_forge/Scripts/python.exe"
+
+
 def test_resolve_demucs_python_uses_sidecar_python(tmp_path, monkeypatch):
     monkeypatch.delenv("AUDIO_FORGE_DEMUCS_PYTHON", raising=False)
     sidecar = tmp_path / "plugins" / "models" / "python" / "python.exe"

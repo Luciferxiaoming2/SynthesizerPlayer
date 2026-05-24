@@ -1411,6 +1411,15 @@ def resolve_demucs_python(root: Path) -> str:
     if configured:
         return configured
 
+    config_path = root / "demucs_python.txt"
+    if config_path.exists():
+        try:
+            configured_path = config_path.read_text(encoding="utf-8").strip().strip('"')
+        except OSError:
+            configured_path = ""
+        if configured_path:
+            return configured_path
+
     candidates = [
         root / "plugins" / "models" / "python" / "python.exe",
         root / "python" / "python.exe",

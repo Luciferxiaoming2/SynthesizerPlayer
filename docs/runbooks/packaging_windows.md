@@ -105,9 +105,10 @@ GUI 选择 Demucs 后端时会自动查找：
 Demucs 需要可执行 Python。GUI 会按以下顺序查找：
 
 1. 环境变量 `AUDIO_FORGE_DEMUCS_PYTHON`
-2. `plugins\models\python\python.exe`
-3. `python\python.exe`
-4. 开发态使用当前解释器，打包态回退到系统 `python`
+2. exe 同级 `demucs_python.txt`
+3. `plugins\models\python\python.exe`
+4. `python\python.exe`
+5. 开发态使用当前解释器，打包态回退到系统 `python`
 
 开发阶段可以临时依赖本机环境：
 
@@ -115,6 +116,14 @@ Demucs 需要可执行 Python。GUI 会按以下顺序查找：
 $env:AUDIO_FORGE_DEMUCS_PYTHON = "D:\uv\venvs\audio_forge\Scripts\python.exe"
 dist\audio-forge-ui\audio-forge-ui.exe
 ```
+
+也可以在便携目录放 `demucs_python.txt`，内容为一行 Python 路径：
+
+```text
+D:\uv\venvs\audio_forge\Scripts\python.exe
+```
+
+开发阶段可用这个文件让直接双击 `audio-forge-ui.exe` 也能找到当前机器上的 Demucs 环境。正式交付时，`demucs_python.txt` 应改为指向包内 `python\python.exe`，或直接放置 `python\python.exe` 让程序自动发现。
 
 正式交付时不应依赖上面的开发机路径。交付包应满足：
 
