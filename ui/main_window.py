@@ -68,6 +68,8 @@ class WorkbenchBridge(QObject):
     pathsChanged = pyqtSignal()
     playbackChanged = pyqtSignal()
     lyricsChanged = pyqtSignal()
+    lyricLinesChanged = pyqtSignal()
+    lyricPositionChanged = pyqtSignal()
     songsChanged = pyqtSignal()
     devicesChanged = pyqtSignal()
     importOptionsChanged = pyqtSignal()
@@ -252,19 +254,19 @@ class WorkbenchBridge(QObject):
             return False
         return self._playback.controls.instrumental_muted
 
-    @pyqtProperty(str, notify=lyricsChanged)
+    @pyqtProperty(str, notify=lyricPositionChanged)
     def currentLyric(self) -> str:
         return self._current_lyric
 
-    @pyqtProperty(str, notify=lyricsChanged)
+    @pyqtProperty(str, notify=lyricPositionChanged)
     def nextLyric(self) -> str:
         return self._next_lyric
 
-    @pyqtProperty("QStringList", notify=lyricsChanged)
+    @pyqtProperty("QStringList", notify=lyricLinesChanged)
     def lyricLines(self) -> list[str]:
         return list(self._lyric_lines)
 
-    @pyqtProperty(int, notify=lyricsChanged)
+    @pyqtProperty(int, notify=lyricPositionChanged)
     def currentLyricIndex(self) -> int:
         return self._current_lyric_index
 
@@ -297,6 +299,7 @@ class WorkbenchBridge(QObject):
             timeline = load_lyrics_timeline(self._lyrics_path)
             self._lyrics_sync = LyricPlaybackSynchronizer(timeline)
             self._lyric_lines = timeline.texts()
+            self._emit_lyrics_reloaded()
             self._update_lyrics()
             self.playbackChanged.emit()
             tone_text = "，已应用跑调" if self._tone_deaf_ratio > 0.01 else ""
@@ -594,7 +597,7 @@ class WorkbenchBridge(QObject):
             self._lyric_lines = timeline.texts()
             self._update_lyrics()
             self.pathsChanged.emit()
-            self.lyricsChanged.emit()
+            self._emit_lyrics_reloaded()
             self._set_status(
                 f"歌词已生成：{self._lyrics_path}。{lyrics_backend_status_text(self._lyrics_backend)}"
             )
@@ -644,7 +647,7 @@ class WorkbenchBridge(QObject):
             self._lyrics_sync = LyricPlaybackSynchronizer(timeline)
             self._lyric_lines = timeline.texts()
             self.pathsChanged.emit()
-            self.lyricsChanged.emit()
+            self._emit_lyrics_reloaded()
             self._set_status(f"已加载歌曲：{session.asset.name}")
             self.loadPlayback()
         except Exception:
@@ -674,7 +677,7 @@ class WorkbenchBridge(QObject):
             self._current_lyric = ""
             self._next_lyric = ""
             self._current_lyric_index = -1
-            self.lyricsChanged.emit()
+            self._emit_lyrics_reloaded()
             self.playbackChanged.emit()
 
     @pyqtSlot()
@@ -690,7 +693,7 @@ class WorkbenchBridge(QObject):
         self._next_lyric = ""
         self._current_lyric_index = -1
         self.songsChanged.emit()
-        self.lyricsChanged.emit()
+        self._emit_lyrics_reloaded()
         self.playbackChanged.emit()
         self._set_status("已清空左侧歌曲列表，不会删除磁盘文件")
 
@@ -751,9 +754,24 @@ class WorkbenchBridge(QObject):
         if self._playback is not None:
             position_ms = round(self._playback.position_seconds * 1_000)
         state = self._lyrics_sync.state_at(position_ms)
-        self._current_lyric_index = -1 if state.current_index is None else state.current_index
-        self._current_lyric = state.current_text or "..."
-        self._next_lyric = "" if state.next_line is None else state.next_line.text
+        current_index = -1 if state.current_index is None else state.current_index
+        current_lyric = state.current_text or "..."
+        next_lyric = "" if state.next_line is None else state.next_line.text
+        if (
+            current_index == self._current_lyric_index
+            and current_lyric == self._current_lyric
+            and next_lyric == self._next_lyric
+        ):
+            return
+        self._current_lyric_index = current_index
+        self._current_lyric = current_lyric
+        self._next_lyric = next_lyric
+        self.lyricPositionChanged.emit()
+        self.lyricsChanged.emit()
+
+    def _emit_lyrics_reloaded(self) -> None:
+        self.lyricLinesChanged.emit()
+        self.lyricPositionChanged.emit()
         self.lyricsChanged.emit()
 
     def _stop_audio_output(self, reset_engine: bool) -> None:

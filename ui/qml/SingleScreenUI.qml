@@ -6,9 +6,9 @@ import QtQuick.Layouts
 ApplicationWindow {
     id: root
     width: 1480
-    height: 1120
-    minimumWidth: 1180
-    minimumHeight: 760
+    height: 920
+    minimumWidth: 920
+    minimumHeight: 620
     visible: true
     title: "Synthesizer Player"
     color: "#07080d"
@@ -26,6 +26,10 @@ ApplicationWindow {
     property color textMain: "#f8f5fb"
     property color textMuted: "#9aa0ad"
     property color textDim: "#687080"
+    property real designWidth: 1480
+    property real designHeight: 920
+    property real uiScale: Math.max(0.62, Math.min(1.35, Math.min(width / designWidth, height / designHeight)))
+    property real tonePreviewValue: 0.4
 
     function selectedSeparatorBackend() {
         if (!root.bridge || separatorPicker.currentIndex < 0)
@@ -108,6 +112,17 @@ ApplicationWindow {
         onTriggered: statusPopup.close()
     }
 
+    Timer {
+        id: toneApplyTimer
+        interval: 280
+        repeat: false
+        onTriggered: {
+            toneSlider.value = root.tonePreviewValue
+            if (root.bridge)
+                root.bridge.setToneDeafRatio(root.tonePreviewValue)
+        }
+    }
+
     Connections {
         target: root.bridge
         function onStatusChanged() {
@@ -120,10 +135,10 @@ ApplicationWindow {
 
     Popup {
         id: settingsPopup
-        x: root.width - width - 18
-        y: topBar.height + 10
-        width: 420
-        height: Math.min(root.height - topBar.height - bottomBar.height - 28, 760)
+        x: root.width - width - 18 * root.uiScale
+        y: topBar.height * root.uiScale + 10 * root.uiScale
+        width: Math.min(root.width - 36 * root.uiScale, 420 * root.uiScale)
+        height: Math.min(root.height - topBar.height * root.uiScale - bottomBar.height * root.uiScale - 28 * root.uiScale, 760 * root.uiScale)
         modal: true
         focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -336,7 +351,10 @@ ApplicationWindow {
 
     Rectangle {
         id: appFrame
-        anchors.fill: parent
+        width: root.width / root.uiScale
+        height: root.height / root.uiScale
+        transformOrigin: Item.TopLeft
+        scale: root.uiScale
         color: root.bg
 
         Rectangle {
@@ -1074,9 +1092,21 @@ ApplicationWindow {
                                 id: toneVisualSlider
                                 from: 0.0
                                 to: 1.0
-                                value: toneSlider.value
+                                value: root.tonePreviewValue
                                 Layout.fillWidth: true
-                                onMoved: toneSlider.value = value
+                                onMoved: {
+                                    root.tonePreviewValue = value
+                                    if (!toneApplyTimer.running)
+                                        toneApplyTimer.start()
+                                }
+                                onPressedChanged: {
+                                    if (!pressed) {
+                                        toneApplyTimer.stop()
+                                        toneSlider.value = root.tonePreviewValue
+                                        if (root.bridge)
+                                            root.bridge.setToneDeafRatio(root.tonePreviewValue)
+                                    }
+                                }
                             }
                         }
                     }
@@ -1089,7 +1119,7 @@ ApplicationWindow {
                 from: 0.0
                 to: 1.0
                 value: 0.4
-                onValueChanged: if (root.bridge) root.bridge.setToneDeafRatio(value)
+                onValueChanged: root.tonePreviewValue = value
             }
 
             Slider {
