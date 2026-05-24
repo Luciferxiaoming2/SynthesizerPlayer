@@ -357,7 +357,7 @@ ApplicationWindow {
                         Text {
                             anchors.centerIn: parent
                             visible: !root.bridge || root.bridge.lyricLines.length === 0
-                            text: "纯音乐或暂无歌词：可导入同名 .lrc/.srt，或点“生成歌词”。本地识别需要先安装 faster-whisper。"
+                            text: "纯音乐或暂无歌词：可导入同名 .lrc/.srt，或选择“智能识别歌词”后点“生成歌词”。"
                             color: root.textMuted
                             font.pixelSize: 18
                             width: parent.width * 0.86

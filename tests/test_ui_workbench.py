@@ -226,7 +226,7 @@ def test_workbench_bridge_blocks_missing_faster_whisper(tmp_path, monkeypatch):
     bridge.importSongWithBackendsAsync(song.as_uri(), "preview", "faster-whisper")
 
     assert not bridge.importBusy
-    assert "本地识别未安装" in bridge.status
+    assert "没有内置智能歌词识别组件" in bridge.status
 
 
 def test_format_user_error_translates_missing_faster_whisper():
@@ -348,7 +348,7 @@ def test_backend_labels_are_chinese_for_ui():
     assert separator_backend_label("preview") == "快速预览"
     assert separator_backend_label("demucs") == "Demucs 人声分离"
     assert lyrics_backend_label("preview") == "占位提示"
-    assert lyrics_backend_label("faster-whisper") == "本地识别"
+    assert lyrics_backend_label("faster-whisper") == "智能识别歌词"
     assert lyrics_backend_label("none") == "不生成歌词"
 
 
@@ -378,6 +378,16 @@ def test_workbench_bridge_generate_lyrics_warns_when_backend_is_none(tmp_path):
     bridge.generateLyrics()
 
     assert "不生成歌词" in bridge.status
+
+
+def test_workbench_bridge_prefers_bundled_lyrics_model(tmp_path):
+    model_dir = tmp_path / "plugins" / "models" / "faster-whisper" / "base"
+    model_dir.mkdir(parents=True)
+    (model_dir / "model.bin").write_bytes(b"fake")
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    bridge = WorkbenchBridge(tmp_path)
+
+    assert bridge._local_lyrics_model_path() == model_dir
 
 
 def test_resolve_demucs_python_prefers_configured_env(tmp_path, monkeypatch):

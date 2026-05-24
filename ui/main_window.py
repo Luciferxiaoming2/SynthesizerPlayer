@@ -162,8 +162,10 @@ class WorkbenchBridge(QObject):
     def lyricsBackendStatus(self) -> str:
         if self._lyrics_backend == "faster-whisper":
             if is_module_available("faster_whisper"):
-                return "本地识别已可用：生成歌词时会尽量保留原始语言"
-            return "本地识别未安装：请先安装 faster-whisper，或切到“占位提示”"
+                if self._local_lyrics_model_path() is not None:
+                    return "智能识别已就绪：会自动生成中文或英文歌词"
+                return "智能识别组件已安装，模型文件未随包放入；请联系交付人员补齐模型包"
+            return "智能识别组件未打包，请使用包含歌词识别的完整版本"
         if self._lyrics_backend == "preview":
             return "占位提示：不会识别内容，只提示用户导入歌词或安装识别依赖"
         return "不生成歌词：适合纯音乐，歌词区会显示暂无歌词"
@@ -513,8 +515,8 @@ class WorkbenchBridge(QObject):
             self._lyrics_backend = lyrics_backend
             self.importOptionsChanged.emit()
             self._set_status(
-                "本地识别未安装，暂时不能生成歌词。请先安装 faster-whisper，"
-                "或把歌词后端切换为“占位提示/不生成歌词”。"
+                "当前版本没有内置智能歌词识别组件，请使用完整安装包，"
+                "或先切换为“占位提示/不生成歌词”。"
             )
             return
         source_path = Path(QUrl(url).toLocalFile())
@@ -556,7 +558,7 @@ class WorkbenchBridge(QObject):
         self._lyrics_backend = backend
         self.importOptionsChanged.emit()
         if backend == "faster-whisper" and not is_module_available("faster_whisper"):
-            self._set_status("本地识别未安装，选择后不会生效；请安装 faster-whisper 或切换歌词后端。")
+            self._set_status("当前版本没有内置智能歌词识别组件，请使用完整安装包。")
         else:
             self._set_status(f"已选择歌词方式：{lyrics_backend_label(backend)}")
 
@@ -567,7 +569,7 @@ class WorkbenchBridge(QObject):
             return
         if self._lyrics_backend == "faster-whisper" and not is_module_available("faster_whisper"):
             self._set_status(
-                "生成歌词前需要先安装 faster-whisper。本机未检测到依赖；"
+                "当前版本没有内置智能歌词识别组件，请使用完整安装包；"
                 "也可以先选择“占位提示”，或导入同名 .lrc/.srt 歌词文件。"
             )
             return
@@ -905,13 +907,28 @@ class WorkbenchBridge(QObject):
     def _build_lyrics_transcriber(self, backend: str):
         if backend == "faster-whisper":
             if not is_module_available("faster_whisper"):
-                raise RuntimeError("faster-whisper 未安装，无法识别歌词。请安装依赖后重试。")
+                raise RuntimeError("智能歌词识别组件未打包，无法生成歌词。")
+            model_size = str(self._local_lyrics_model_path() or "base")
             return FasterWhisperLyricsTranscriber(
-                FasterWhisperConfig(model_size="base", device="cpu", compute_type="int8")
+                FasterWhisperConfig(model_size=model_size, device="cpu", compute_type="int8")
             )
         if backend == "none":
             return None
         return PreviewLyricsTranscriber()
+
+    def _local_lyrics_model_path(self) -> Path | None:
+        candidates = [
+            self._root / "plugins" / "models" / "faster-whisper" / "base",
+            Path(getattr(sys, "_MEIPASS", self._root))
+            / "plugins"
+            / "models"
+            / "faster-whisper"
+            / "base",
+        ]
+        for candidate in candidates:
+            if (candidate / "model.bin").exists() and (candidate / "config.json").exists():
+                return candidate
+        return None
 
     def _build_audio_standardizer(self, source_path: Path) -> FfmpegAudioStandardizer | None:
         if source_path.suffix.lower() == ".wav":
@@ -956,7 +973,7 @@ def separator_backend_label(backend: str) -> str:
 def lyrics_backend_label(backend: str) -> str:
     labels = {
         "preview": "占位提示",
-        "faster-whisper": "本地识别",
+        "faster-whisper": "智能识别歌词",
         "none": "不生成歌词",
     }
     return labels.get(backend, backend)
@@ -974,7 +991,7 @@ def path_target_label(target: str) -> str:
 
 def lyrics_backend_status_text(backend: str) -> str:
     if backend == "faster-whisper":
-        return "本地识别已执行；如果歌曲是英文，歌词会尽量保持英文。"
+        return "智能识别已执行；如果歌曲是英文，歌词会尽量保持英文。"
     if backend == "preview":
         return "未找到真实歌词时会显示占位提示。"
     return "未生成歌词，纯音乐或暂无歌词时歌词区为空。"
@@ -982,7 +999,9 @@ def lyrics_backend_status_text(backend: str) -> str:
 
 def format_user_error(message: str) -> str:
     if "faster-whisper" in message or "faster_whisper" in message:
-        return "歌词识别失败：本地识别依赖未安装或不可用。请安装 faster-whisper 后重试，或切换到“占位提示/不生成歌词”。"
+        return "歌词识别失败：当前完整识别组件不可用。请使用包含智能识别的完整安装包，或切换到“占位提示/不生成歌词”。"
+    if "智能歌词识别组件" in message:
+        return "歌词识别失败：当前完整识别组件不可用。请使用包含智能识别的完整安装包，或切换到“占位提示/不生成歌词”。"
     if "Format not recognised" in message or "Format not recognized" in message:
         return "导入失败：当前音频格式不能直接读取。请确认 ffmpeg 已放在 plugins/models/ffmpeg，或先转换为 wav。"
     if "ffmpeg" in message and "not found" in message:

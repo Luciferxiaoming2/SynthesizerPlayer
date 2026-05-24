@@ -1,14 +1,46 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+import importlib.util
+
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 ROOT = Path(SPECPATH).parents[1]
+
+
+def collect_optional_package(package_name):
+    if importlib.util.find_spec(package_name) is None:
+        return [], [], []
+    return collect_data_files(package_name), collect_dynamic_libs(package_name), [package_name]
+
+
+optional_datas = []
+optional_binaries = []
+optional_hiddenimports = []
+for package in [
+    "faster_whisper",
+    "ctranslate2",
+    "av",
+    "tokenizers",
+    "onnxruntime",
+    "huggingface_hub",
+    "tqdm",
+]:
+    datas, binaries, hiddenimports = collect_optional_package(package)
+    optional_datas += datas
+    optional_binaries += binaries
+    optional_hiddenimports += hiddenimports
+
+local_asr_model = ROOT / "plugins" / "models" / "faster-whisper" / "base"
+local_model_datas = []
+if (local_asr_model / "model.bin").exists():
+    local_model_datas.append((str(local_asr_model), "plugins/models/faster-whisper/base"))
 
 
 a = Analysis(
     [str(ROOT / "ui" / "main_window.py")],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=optional_binaries,
     datas=[
         (str(ROOT / "ui" / "qml"), "ui/qml"),
         (str(ROOT / "README.md"), "."),
@@ -17,7 +49,7 @@ a = Analysis(
             str(ROOT / "core_engine" / "player" / "demucs_soundfile_runner.py"),
             "core_engine/player",
         ),
-    ],
+    ] + optional_datas + local_model_datas,
     hiddenimports=[
         "PyQt6.QtCore",
         "PyQt6.QtGui",
@@ -28,13 +60,20 @@ a = Analysis(
         "sounddevice",
         "numpy",
         "pedalboard",
-    ],
+    ] + optional_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
         "librosa",
         "pyworld",
+        "torch",
+        "torchaudio",
+        "torchvision",
+        "scipy",
+        "numba",
+        "llvmlite",
+        "pytest",
     ],
     noarchive=False,
     optimize=0,

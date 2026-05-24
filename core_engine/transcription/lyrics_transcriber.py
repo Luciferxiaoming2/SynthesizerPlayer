@@ -16,7 +16,7 @@ class LyricsTranscriptionRequest:
 
 class LyricsTranscriber:
     def transcribe(self, request: LyricsTranscriptionRequest) -> Path:
-        raise NotImplementedError("Wire this adapter to Whisper, faster-whisper, or another ASR backend")
+        raise NotImplementedError("Wire this adapter to a local ASR backend")
 
 
 class PreviewLyricsTranscriber(LyricsTranscriber):
@@ -29,12 +29,12 @@ class PreviewLyricsTranscriber(LyricsTranscriber):
         midpoint_ms = max(0, round(duration_seconds * 500.0))
 
         # 这不是 ASR 结果，只是让没有歌词的歌曲也能进入“可编辑时间轴”。
-        # 后续接 faster-whisper 时，只需要替换这个 adapter。
+        # 这不是识别结果；完整包里的“智能识别歌词”会替换为真实 ASR 结果。
         request.output_path.write_text(
             "\n".join(
                 [
                     "[00:00.000]未找到歌词文件",
-                    f"[{format_lrc_timestamp(midpoint_ms)}]请导入 .lrc/.srt，或使用 faster-whisper 识别原始语言歌词",
+                    f"[{format_lrc_timestamp(midpoint_ms)}]请导入 .lrc/.srt，或使用智能识别歌词",
                 ]
             ),
             encoding="utf-8",
@@ -43,7 +43,7 @@ class PreviewLyricsTranscriber(LyricsTranscriber):
 
 
 class ExternalCommandLyricsTranscriber(LyricsTranscriber):
-    """Command adapter for optional ASR tools such as faster-whisper."""
+    """Command adapter for optional local ASR tools."""
 
     def __init__(self, command_template: Sequence[str]) -> None:
         if not command_template:
@@ -76,10 +76,7 @@ class FasterWhisperConfig:
 
 
 class FasterWhisperLyricsTranscriber(LyricsTranscriber):
-    """Local ASR adapter for faster-whisper.
-
-    The import is intentionally lazy so the app can run without faster-whisper installed.
-    """
+    """Local ASR adapter used by the packaged smart lyrics feature."""
 
     def __init__(self, config: FasterWhisperConfig | None = None) -> None:
         self._config = config or FasterWhisperConfig()
@@ -89,7 +86,7 @@ class FasterWhisperLyricsTranscriber(LyricsTranscriber):
             from faster_whisper import WhisperModel
         except ImportError as exc:
             raise RuntimeError(
-                "faster-whisper is not installed. Install it only when real ASR is needed."
+                "智能歌词识别组件未打包，无法生成歌词。"
             ) from exc
 
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,7 +110,7 @@ class FasterWhisperLyricsTranscriber(LyricsTranscriber):
             lines.append(f"[{format_lrc_timestamp(start_ms)}]{text}")
 
         if not lines:
-            lines = ["[00:00.000]No lyrics detected"]
+            lines = ["[00:00.000]纯音乐或未识别到歌词"]
         request.output_path.write_text("\n".join(lines), encoding="utf-8")
         return request.output_path
 
