@@ -72,7 +72,7 @@ class LyricRewriteBackendConfig:
 
     def build_singer(self) -> DiffSingerClient:
         if self.backend == "local_tts":
-            return LocalSpeechSingingClient()
+            return LocalSpeechSingingClient(fallback=PreviewSingingClient())
         if self.backend == "external_svs":
             if not self.diff_command:
                 raise ValueError("外部唱声合成后端缺少 diff_command")

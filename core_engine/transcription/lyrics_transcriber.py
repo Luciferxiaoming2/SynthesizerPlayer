@@ -81,6 +81,8 @@ class FasterWhisperConfig:
 class FasterWhisperLyricsTranscriber(LyricsTranscriber):
     """Local ASR adapter used by the packaged smart lyrics feature."""
 
+    _model_cache = {}
+
     def __init__(self, config: FasterWhisperConfig | None = None) -> None:
         self._config = config or FasterWhisperConfig()
 
@@ -93,11 +95,15 @@ class FasterWhisperLyricsTranscriber(LyricsTranscriber):
             ) from exc
 
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
-        model = WhisperModel(
-            self._config.model_size,
-            device=self._config.device,
-            compute_type=self._config.compute_type,
-        )
+        cache_key = (self._config.model_size, self._config.device, self._config.compute_type)
+        model = self._model_cache.get(cache_key)
+        if model is None:
+            model = WhisperModel(
+                self._config.model_size,
+                device=self._config.device,
+                compute_type=self._config.compute_type,
+            )
+            self._model_cache[cache_key] = model
         segments, _info = model.transcribe(
             str(request.audio_path),
             language=self._config.language,

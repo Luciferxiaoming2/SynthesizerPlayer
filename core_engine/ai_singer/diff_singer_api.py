@@ -81,17 +81,26 @@ class LocalSpeechSingingClient(DiffSingerClient):
             raise RuntimeError("本机轻量改词唱需要 Windows 系统语音组件")
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
         language = lyric_language_hint(request.lyric)
-        script = (
-            "& { param($lyric, $outPath, $target) "
-            "Add-Type -AssemblyName System.Speech; "
-            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-            "$voice = $s.GetInstalledVoices() | Where-Object { $_.Enabled -and $_.VoiceInfo.Culture.TwoLetterISOLanguageName -eq $target } | Select-Object -First 1; "
-            "if ($voice -ne $null) { $s.SelectVoice($voice.VoiceInfo.Name); } "
-            "$s.Rate = -1; $s.Volume = 100; "
-            "$s.SetOutputToWaveFile($outPath); "
-            "$s.Speak($lyric); "
-            "$s.Dispose(); "
-            "}"
+        script_path = request.output_path.with_suffix(".sapi.ps1")
+        lyric_path = request.output_path.with_suffix(".lyric.txt")
+        lyric_path.write_text(request.lyric, encoding="utf-8")
+        script_path.write_text(
+            "\n".join(
+                [
+                    "param([string]$lyricPath, [string]$outPath, [string]$target)",
+                    "$lyric = [System.IO.File]::ReadAllText($lyricPath, [System.Text.Encoding]::UTF8)",
+                    "Add-Type -AssemblyName System.Speech",
+                    "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer",
+                    "$voice = $s.GetInstalledVoices() | Where-Object { $_.Enabled -and $_.VoiceInfo.Culture.TwoLetterISOLanguageName -eq $target } | Select-Object -First 1",
+                    "if ($voice -ne $null) { $s.SelectVoice($voice.VoiceInfo.Name) }",
+                    "$s.Rate = -1",
+                    "$s.Volume = 100",
+                    "$s.SetOutputToWaveFile($outPath)",
+                    "$s.Speak($lyric)",
+                    "$s.Dispose()",
+                ]
+            ),
+            encoding="utf-8",
         )
         try:
             subprocess.run(
@@ -100,9 +109,9 @@ class LocalSpeechSingingClient(DiffSingerClient):
                     "-NoProfile",
                     "-ExecutionPolicy",
                     "Bypass",
-                    "-Command",
-                    script,
-                    request.lyric,
+                    "-File",
+                    str(script_path),
+                    str(lyric_path),
                     str(request.output_path),
                     language,
                 ],
@@ -122,6 +131,15 @@ class LocalSpeechSingingClient(DiffSingerClient):
             if self._fallback is not None:
                 return self._fallback.synthesize(request)
             raise RuntimeError(f"本机语音合成不可用：{exc}") from exc
+        finally:
+            try:
+                script_path.unlink()
+            except OSError:
+                pass
+            try:
+                lyric_path.unlink()
+            except OSError:
+                pass
 
 
 def lyric_language_hint(lyric: str) -> str:

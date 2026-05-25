@@ -1,6 +1,7 @@
 """PyQt6/QML application shell for the Audio Forge MVP."""
 
 from pathlib import Path
+import gc
 import importlib.util
 import json
 import os
@@ -148,6 +149,26 @@ class ToneDeafRenderWorker(QObject):
             self.failed.emit(traceback.format_exc(limit=1).strip(), self._job_id)
 
 
+class ExportMixWorker(QObject):
+    progress = pyqtSignal(int, str)
+    finished = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, config: AudioExportConfig) -> None:
+        super().__init__()
+        self._config = config
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            self.progress.emit(15, "正在准备导出音频")
+            result = export_processed_mix(self._config)
+            self.progress.emit(95, "正在完成导出")
+            self.finished.emit(result)
+        except Exception:
+            self.failed.emit(traceback.format_exc(limit=1).strip())
+
+
 class LyricRewriteWorker(QObject):
     progress = pyqtSignal(int, str)
     finished = pyqtSignal(str, str, int)
@@ -178,6 +199,8 @@ class LyricRewriteWorker(QObject):
     def run(self) -> None:
         try:
             self.progress.emit(10, "正在读取当前人声音轨")
+            if not self._vocal_path.exists():
+                raise FileNotFoundError(f"current vocal track not found: {self._vocal_path}")
             vocal, sample_rate = read_audio(self._vocal_path)
             start_frame = max(0, round(self._start_ms * sample_rate / 1000))
             end_frame = max(start_frame + 1, round(self._end_ms * sample_rate / 1000))
@@ -344,12 +367,15 @@ class WorkbenchBridge(QObject):
         self._next_lyric = ""
         self._current_lyric_progress = 0.0
         self._lyrics_offset_ms = 0
-        self._tone_deaf_ratio = 0.4
+        self._tone_deaf_ratio = 0.0
         self._tone_deaf_busy = False
         self._tone_deaf_progress = 0
         self._tone_deaf_status = ""
         self._tone_deaf_thread: QThread | None = None
         self._tone_deaf_worker: ToneDeafRenderWorker | None = None
+        self._export_thread: QThread | None = None
+        self._export_worker: ExportMixWorker | None = None
+        self._export_busy = False
         self._tone_deaf_job_id = 0
         self._tone_deaf_pending_ratio: float | None = None
         self._navigation_busy = False
@@ -1038,6 +1064,9 @@ class WorkbenchBridge(QObject):
             )
             return
         source_path = Path(QUrl(url).toLocalFile())
+        if not source_path.exists():
+            self._set_status("导入失败：没有找到选择的音乐文件，请检查文件是否被移动或删除。")
+            return
         self._separator_backend = separator_backend
         self._lyrics_backend = lyrics_backend
         self.importOptionsChanged.emit()
@@ -1149,6 +1178,7 @@ class WorkbenchBridge(QObject):
         )
 
     def _reload_lyrics_after_generation(self) -> None:
+        repair_question_mark_lyrics_from_backup(self._lyrics_path)
         timeline = load_lyrics_timeline(self._lyrics_path)
         self._lyrics_sync = LyricPlaybackSynchronizer(timeline, self._lyrics_offset_ms)
         self._set_lyric_timeline_view(timeline)
@@ -1200,6 +1230,9 @@ class WorkbenchBridge(QObject):
         text = new_lyric.strip()
         if not text:
             self._set_status("请先输入要改唱的新歌词。")
+            return
+        if is_question_mark_pollution(text):
+            self._set_status("改词唱失败：新歌词看起来是编码错误产生的问号，请重新输入中文或英文。")
             return
         timeline = load_lyrics_timeline(self._lyrics_path)
         lines = timeline.lines
@@ -1364,7 +1397,7 @@ class WorkbenchBridge(QObject):
     def _handle_lyric_rewrite_failed(self, message: str) -> None:
         self._lyric_rewrite_status = "改词唱生成失败"
         self._set_lyric_rewrite_busy(False)
-        self._set_status(format_user_error(message))
+        self._set_status(format_lyric_rewrite_error(message))
 
     @pyqtSlot()
     def _cleanup_lyric_rewrite_thread(self) -> None:
@@ -1474,6 +1507,9 @@ class WorkbenchBridge(QObject):
 
     def _apply_lyric_rewrite_text(self, lyric_index: int, lyric: str) -> None:
         if not self._lyrics_path.exists():
+            return
+        if is_question_mark_pollution(lyric):
+            self._set_status("改词唱音频已生成，但新歌词疑似编码错误，已拒绝写入歌词文件。")
             return
         try:
             backup_lyrics_file_once(self._lyrics_path)
@@ -1618,6 +1654,7 @@ class WorkbenchBridge(QObject):
             if index < 0 or index >= len(self._songs):
                 self._set_status("请先在左侧选择歌曲")
                 return
+            self._release_heavy_audio_state()
             selected = self._songs[index]
             if selected.source_path is not None:
                 self._current_song_index = index
@@ -1638,6 +1675,7 @@ class WorkbenchBridge(QObject):
                 self._lyrics_path = session.asset.lyrics_path
             self._output_path = self._mock_dir / f"{sanitize_filename(session.asset.name)}_export.wav"
             self._refresh_lyric_rewrite_versions()
+            repair_question_mark_lyrics_from_backup(self._lyrics_path)
             timeline = load_lyrics_timeline(self._lyrics_path)
             self._lyrics_sync = LyricPlaybackSynchronizer(timeline, self._lyrics_offset_ms)
             self._set_lyric_timeline_view(timeline)
@@ -1666,6 +1704,7 @@ class WorkbenchBridge(QObject):
         self.songsChanged.emit()
         delete_text = "并删除磁盘文件" if deleted_paths else "，但未找到可删除的磁盘文件"
         self._set_status(f"已从列表移除：{removed.name}{delete_text}")
+        self._release_heavy_audio_state()
         if not removed_current:
             return
 
@@ -1686,10 +1725,12 @@ class WorkbenchBridge(QObject):
                 deleted_count += 1
         self._songs = []
         self._clear_current_song_state()
+        self._release_heavy_audio_state()
         self.songsChanged.emit()
         self._set_status(f"已清空左侧歌曲列表，并删除 {deleted_count} 个磁盘项目")
 
     def _clear_current_song_state(self) -> None:
+        self._release_heavy_audio_state()
         self._current_song_key = None
         self._current_song_index = -1
         self._current_source_path = None
@@ -1703,6 +1744,10 @@ class WorkbenchBridge(QObject):
         self._current_lyric_progress = 0.0
         self._emit_lyrics_reloaded()
         self.playbackChanged.emit()
+
+    def _release_heavy_audio_state(self) -> None:
+        self._tone_deaf_cache.clear()
+        gc.collect()
 
     def _delete_song_storage(self, song: SongAsset) -> list[Path]:
         targets: list[Path] = []
@@ -1751,24 +1796,64 @@ class WorkbenchBridge(QObject):
 
     @pyqtSlot(float, float)
     def exportMix(self, tone_deaf_ratio: float, master_gain_db: float) -> None:
-        try:
-            result = export_processed_mix(
-                AudioExportConfig(
-                    vocal_path=self._vocal_path,
-                    instrumental_path=self._instrumental_path,
-                    output_path=self._output_path,
-                    tone_deaf_ratio=tone_deaf_ratio,
-                    master_gain_db=master_gain_db,
-                    master_plugins=list(self._master_plugin_paths),
-                    mp3_encoder=self._build_mp3_encoder(self._output_path),
-                )
-            )
-            self._set_status(
-                f"已导出：{result.output_path} "
-                f"（{result.duration_seconds:.2f} 秒 / {result.sample_rate} Hz）"
-            )
-        except Exception:
-            self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
+        if self._export_busy:
+            self._set_status("正在导出音频，请稍等。")
+            return
+        config = AudioExportConfig(
+            vocal_path=self._vocal_path,
+            instrumental_path=self._instrumental_path,
+            output_path=self._output_path,
+            tone_deaf_ratio=tone_deaf_ratio,
+            master_gain_db=master_gain_db,
+            master_plugins=list(self._master_plugin_paths),
+            mp3_encoder=self._build_mp3_encoder(self._output_path),
+        )
+        if QCoreApplication.instance() is None:
+            try:
+                result = export_processed_mix(config)
+                self._handle_export_finished(result)
+            except Exception:
+                self._handle_export_failed(traceback.format_exc(limit=1).strip())
+            return
+
+        self._export_busy = True
+        self._set_status("正在后台导出音频，界面可以继续操作")
+        self._export_thread = QThread(self)
+        self._export_worker = ExportMixWorker(config)
+        self._export_worker.moveToThread(self._export_thread)
+        self._export_thread.started.connect(self._export_worker.run)
+        self._export_worker.progress.connect(self._handle_export_progress)
+        self._export_worker.finished.connect(self._handle_export_finished)
+        self._export_worker.failed.connect(self._handle_export_failed)
+        self._export_worker.finished.connect(self._export_thread.quit)
+        self._export_worker.failed.connect(self._export_thread.quit)
+        self._export_thread.finished.connect(self._export_worker.deleteLater)
+        self._export_thread.finished.connect(self._cleanup_export_thread)
+        self._export_thread.start()
+
+    @pyqtSlot(int, str)
+    def _handle_export_progress(self, _progress: int, message: str) -> None:
+        self._set_status(message)
+
+    @pyqtSlot(object)
+    def _handle_export_finished(self, result) -> None:
+        self._export_busy = False
+        self._set_status(
+            f"已导出：{result.output_path} "
+            f"（{result.duration_seconds:.2f} 秒 / {result.sample_rate} Hz）"
+        )
+
+    @pyqtSlot(str)
+    def _handle_export_failed(self, message: str) -> None:
+        self._export_busy = False
+        self._set_status(format_user_error(message))
+
+    @pyqtSlot()
+    def _cleanup_export_thread(self) -> None:
+        if self._export_thread is not None:
+            self._export_thread.deleteLater()
+        self._export_thread = None
+        self._export_worker = None
 
     @pyqtSlot()
     def evaluateAlignment(self) -> None:
@@ -2501,6 +2586,8 @@ def original_lyrics_backup_path(path: Path) -> Path:
 
 
 def replace_timed_lyric_text(path: Path, lyric_index: int, new_text: str) -> None:
+    if is_question_mark_pollution(new_text):
+        raise ValueError("新歌词疑似编码错误，拒绝写入纯问号文本")
     suffix = path.suffix.lower()
     content = path.read_text(encoding="utf-8")
     if suffix == ".lrc":
@@ -2549,6 +2636,56 @@ def replace_srt_line_text(content: str, lyric_index: int, new_text: str) -> str:
             blocks[block_index] = "\n".join(parts[:text_start] + [new_text])
             return "".join(blocks)
     raise IndexError("歌词行不存在，无法写入改词")
+
+
+def is_question_mark_pollution(text: str) -> bool:
+    stripped = text.strip()
+    if len(stripped) < 2:
+        return False
+    meaningful = [char for char in stripped if not char.isspace()]
+    return bool(meaningful) and all(char in {"?", "？"} for char in meaningful)
+
+
+def repair_question_mark_lyrics_from_backup(path: Path | None) -> bool:
+    if path is None or not path.exists():
+        return False
+    backup_path = original_lyrics_backup_path(path)
+    if not backup_path.exists():
+        return False
+    try:
+        current = path.read_text(encoding="utf-8")
+        original = backup_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    repaired = repair_question_mark_lyric_content(current, original)
+    if repaired == current:
+        return False
+    path.write_text(repaired, encoding="utf-8")
+    return True
+
+
+def repair_question_mark_lyric_content(current: str, original: str) -> str:
+    original_lines = original.splitlines()
+    output: list[str] = []
+    changed = False
+    pattern = re.compile(r"^(\[\d{1,2}:\d{2}(?:[.:]\d{1,3})?\])(.*)$")
+    for index, line in enumerate(current.splitlines()):
+        match = pattern.match(line.strip())
+        if not match or not is_question_mark_pollution(match.group(2)):
+            output.append(line)
+            continue
+        if index >= len(original_lines):
+            output.append(line)
+            continue
+        original_match = pattern.match(original_lines[index].strip())
+        if original_match and original_match.group(2).strip():
+            output.append(original_lines[index])
+            changed = True
+        else:
+            output.append(line)
+    if not changed:
+        return current
+    return "\n".join(output) + ("\n" if current.endswith("\n") else "")
 
 
 def sanitize_filename(value: str) -> str:
@@ -2691,6 +2828,21 @@ def format_user_error(message: str) -> str:
     return message
 
 
+def format_lyric_rewrite_error(message: str) -> str:
+    if "FileNotFoundError" in message or "not found" in message:
+        return (
+            "改词唱失败：没有找到当前歌曲的人声音轨或模型文件。"
+            "请先确认左侧歌曲已正常加载，或重新导入这首歌后再试。"
+        )
+    if "选中的歌词时间超出当前音频长度" in message:
+        return "改词唱失败：选中的歌词时间超出当前人声音轨长度，请先重新生成或校正歌词时间。"
+    if "CalledProcessError" in message:
+        return "改词唱失败：外部改唱工具执行失败，请检查模型环境或先切回本机轻量试听。"
+    if "No module named" in message:
+        return "改词唱失败：当前改唱运行环境缺少组件，请使用完整安装包或本机轻量试听模式。"
+    return f"改词唱失败：{short_error_detail(message)}"
+
+
 def short_error_detail(message: str) -> str:
     lines = [line.strip() for line in message.splitlines() if line.strip()]
     if not lines:
@@ -2745,6 +2897,8 @@ def demucs_runner_script(root: Path) -> Path | None:
 
 
 def main() -> None:
+    os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+    os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
     os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
     app = QGuiApplication(sys.argv)
     engine = QQmlApplicationEngine()

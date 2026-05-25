@@ -29,7 +29,7 @@ ApplicationWindow {
     property real designWidth: 1480
     property real designHeight: 920
     property real uiScale: Math.max(0.62, Math.min(1.35, Math.min(width / designWidth, height / designHeight)))
-    property real tonePreviewValue: 0.4
+    property real tonePreviewValue: 0.0
     property int rewriteLyricIndex: -1
     property var actionCooldowns: ({})
 
@@ -2281,7 +2281,7 @@ ApplicationWindow {
                 visible: false
                 from: 0.0
                 to: 1.0
-                value: 0.4
+                value: 0.0
                 onValueChanged: root.tonePreviewValue = value
             }
 

@@ -1,11 +1,16 @@
 from pathlib import Path
 import json
 
+import pytest
+
 from ui.main_window import (
     WorkbenchBridge,
+    format_lyric_rewrite_error,
     format_user_error,
     lyrics_backend_label,
     replace_lrc_line_text,
+    replace_timed_lyric_text,
+    repair_question_mark_lyric_content,
     replace_srt_line_text,
     resolve_demucs_python,
     separator_backend_label,
@@ -163,6 +168,13 @@ def test_workbench_bridge_recovers_rewrite_vocal_from_loaded_song(tmp_path):
     assert Path(original_path).exists()
 
 
+def test_lyric_rewrite_file_not_found_error_uses_rewrite_context():
+    message = format_lyric_rewrite_error("FileNotFoundError: missing vocal.wav")
+
+    assert message.startswith("改词唱失败")
+    assert "导入失败" not in message
+
+
 def test_workbench_bridge_keeps_multiple_lyric_rewrite_versions(tmp_path):
     bridge = WorkbenchBridge(tmp_path)
     bridge.generateMockAudio()
@@ -226,6 +238,21 @@ def test_replace_lrc_line_text_preserves_timestamps():
     updated = replace_lrc_line_text("[00:00.000]old\n[00:01.000]next\n", 0, "new words")
 
     assert updated == "[00:00.000]new words\n[00:01.000]next\n"
+
+
+def test_replace_lrc_line_text_rejects_question_mark_pollution():
+    with pytest.raises(ValueError, match="纯问号"):
+        replace_timed_lyric_text(Path("missing.lrc"), 0, "????")
+
+
+def test_repair_question_mark_lyric_content_uses_original_backup_line():
+    repaired = repair_question_mark_lyric_content(
+        "[00:00.000]????\n[00:01.000]next\n",
+        "[00:00.000]原始歌词\n[00:01.000]next\n",
+    )
+
+    assert "[00:00.000]原始歌词" in repaired
+    assert "????" not in repaired
 
 
 def test_replace_lrc_line_text_skips_prompt_leakage():
@@ -768,7 +795,7 @@ def test_right_panel_status_reflects_loaded_audio_and_diagnostics(tmp_path):
     bridge.generateMockAudio()
 
     assert bridge.sampleRateLabel == "16kHz"
-    assert "跑调" in bridge.toneMonitorStatus
+    assert bridge.toneMonitorStatus == "原声稳定"
 
     bridge.evaluateAlignment()
 
