@@ -6,6 +6,7 @@ import pytest
 
 from ui.main_window import (
     WorkbenchBridge,
+    extract_ace_audio_url,
     fit_generated_audio_segment,
     format_lyric_rewrite_error,
     format_user_error,
@@ -45,6 +46,8 @@ def test_workbench_bridge_reports_ace_web_status(tmp_path, monkeypatch):
             return False
 
     def fake_urlopen(url, timeout):
+        if url == "http://127.0.0.1:7860/health":
+            raise OSError("api disabled")
         assert url == "http://127.0.0.1:7860/config"
         assert timeout <= 0.5
         return FakeResponse()
@@ -54,6 +57,22 @@ def test_workbench_bridge_reports_ace_web_status(tmp_path, monkeypatch):
 
     assert bridge.aceWebReady is True
     assert "ACE-Step Web 工作台已运行" in bridge.aceWebStatus
+
+
+def test_extract_ace_audio_url_from_nested_result_payload():
+    payload = {
+        "status": 1,
+        "result": json.dumps(
+            [
+                {
+                    "file": "/v1/audio?path=demo.wav",
+                    "status": 1,
+                }
+            ]
+        ),
+    }
+
+    assert extract_ace_audio_url(payload) == "/v1/audio?path=demo.wav"
 
 
 def test_local_tts_rewrite_segment_pads_instead_of_extreme_time_stretch():

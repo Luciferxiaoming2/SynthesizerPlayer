@@ -216,6 +216,56 @@ class LyricRewriteWorker(QObject):
             source_segment_path.parent.mkdir(parents=True, exist_ok=True)
             write_audio(source_segment_path, vocal[start_frame:end_frame], sample_rate)
 
+            if is_ace_api_ready():
+                self.progress.emit(25, "正在提交 ACE-Step 真唱改写任务")
+                ace_output_path = self._output_path.with_name(f"{self._output_path.stem}.ace.wav")
+                ace_result_path = run_ace_repaint_task(
+                    source_audio_path=self._vocal_path,
+                    output_path=ace_output_path,
+                    lyric=self._lyric,
+                    start_ms=self._start_ms,
+                    end_ms=self._end_ms,
+                    progress=self.progress.emit,
+                )
+                self.progress.emit(82, "正在把 ACE 真唱结果写入当前歌曲")
+                ace_audio, ace_rate = read_audio(ace_result_path)
+                if ace_rate != sample_rate:
+                    ace_audio = resample_audio(ace_audio, ace_rate, sample_rate)
+                if ace_audio.shape[0] >= end_frame:
+                    segment = fit_audio_segment(ace_audio[start_frame:end_frame], end_frame - start_frame, vocal.shape[1])
+                else:
+                    segment = fit_generated_audio_segment(
+                        ace_audio,
+                        end_frame - start_frame,
+                        vocal.shape[1],
+                        allow_time_stretch=False,
+                    )
+                segment = apply_source_energy_envelope(vocal[start_frame:end_frame], segment, sample_rate)
+                output = vocal.copy()
+                output[start_frame:end_frame] = crossfade_replace(output[start_frame:end_frame], segment, sample_rate)
+                self._output_path.parent.mkdir(parents=True, exist_ok=True)
+                write_audio(self._output_path, output, sample_rate)
+                write_lyric_rewrite_manifest(
+                    self._manifest_path,
+                    {
+                        "lyric": self._lyric,
+                        "lyric_index": self._lyric_index,
+                        "start_ms": self._start_ms,
+                        "end_ms": self._end_ms,
+                        "backend": "ace_step_api",
+                        "backend_label": "ACE-Step REST 真唱改写",
+                        "preview_vocal_path": str(self._output_path),
+                        "segment_path": str(ace_result_path),
+                        "source_segment_path": str(source_segment_path),
+                        "used_voice_conversion": False,
+                        "used_content_editor": True,
+                        "audio_replaced": True,
+                    },
+                )
+                self.progress.emit(95, "正在准备 ACE 真唱试听")
+                self.finished.emit(str(self._output_path), self._lyric, self._lyric_index)
+                return
+
             if not self._backend_config.can_replace_audio:
                 self.progress.emit(35, "当前AI改唱运行环境未就绪，仅更新歌词文本")
                 self._output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -363,6 +413,8 @@ class WorkbenchBridge(QObject):
         self._lyric_rewrite_worker: LyricRewriteWorker | None = None
         self._ace_service_last_check = 0.0
         self._ace_service_reachable = False
+        self._ace_api_last_check = 0.0
+        self._ace_api_reachable = False
         self._playback: DualTrackPlaybackEngine | None = None
         self._vocal_gain = 1.0
         self._instrumental_gain = 0.8
@@ -559,6 +611,10 @@ class WorkbenchBridge(QObject):
     @pyqtProperty(str, notify=lyricRewriteChanged)
     def aceWebStatus(self) -> str:
         return self._ace_web_status_label()
+
+    @pyqtProperty(bool, notify=lyricRewriteChanged)
+    def aceApiReady(self) -> bool:
+        return self._is_ace_api_ready()
 
     @pyqtProperty("QStringList", notify=lyricRewriteChanged)
     def lyricRewriteVersionLabels(self) -> list[str]:
@@ -1245,6 +1301,16 @@ class WorkbenchBridge(QObject):
         if self._lyric_rewrite_busy:
             self._set_status("改词唱正在生成中，请稍等。")
             return
+        if (
+            QCoreApplication.instance() is not None
+            and self._is_ace_web_ready()
+            and not self._is_ace_api_ready(force=True)
+        ):
+            self._set_status(
+                "ACE 网页已运行，但未启用自动调用接口。请停止 ACE 后用 uv run acestep --enable-api 重新启动。"
+            )
+            self.lyricRewriteChanged.emit()
+            return
         text = new_lyric.strip()
         if not text:
             self._set_status("请先输入要改唱的新歌词。")
@@ -1654,9 +1720,12 @@ class WorkbenchBridge(QObject):
     @pyqtSlot()
     def refreshAceWorkbenchStatus(self) -> None:
         ready = self._is_ace_web_ready(force=True)
+        api_ready = self._is_ace_api_ready(force=True)
         self.lyricRewriteChanged.emit()
-        if ready:
-            self._set_status("ACE-Step 工作台已运行：http://127.0.0.1:7860")
+        if api_ready:
+            self._set_status("ACE-Step 自动改唱接口已就绪，右侧按钮会调用 ACE 真唱改写。")
+        elif ready:
+            self._set_status("ACE-Step 工作台已运行，但自动接口未开启。请用 uv run acestep --enable-api 重启。")
         else:
             self._set_status("未检测到 ACE-Step 工作台。请先在 ACE-Step-1.5 目录执行 uv run acestep。")
 
@@ -1680,9 +1749,19 @@ class WorkbenchBridge(QObject):
             self._ace_service_reachable = False
         return self._ace_service_reachable
 
+    def _is_ace_api_ready(self, *, force: bool = False) -> bool:
+        now = time.monotonic()
+        if not force and now - self._ace_api_last_check < 5.0:
+            return self._ace_api_reachable
+        self._ace_api_last_check = now
+        self._ace_api_reachable = is_ace_api_ready()
+        return self._ace_api_reachable
+
     def _ace_web_status_label(self) -> str:
+        if self._is_ace_api_ready():
+            return "ACE-Step 自动改唱接口已就绪，点击生成会调用 ACE 真唱改写"
         if self._is_ace_web_ready():
-            return "ACE-Step Web 工作台已运行，可点击右侧按钮打开浏览器测试真唱生成"
+            return "ACE-Step Web 工作台已运行，但未启用自动接口；请用 uv run acestep --enable-api 重启"
         return "未检测到 ACE-Step Web 工作台；如需真唱生成，请先启动 uv run acestep"
 
     def _load_first_song_if_needed(self) -> None:
@@ -2527,6 +2606,117 @@ def fit_generated_audio_segment(
     for channel in range(channel_count):
         rendered[:, channel] = np.interp(target_positions, source_positions, audio[:, channel])
     return rendered
+
+
+ACE_API_BASE_URL = "http://127.0.0.1:7860"
+
+
+def is_ace_api_ready(base_url: str = ACE_API_BASE_URL) -> bool:
+    try:
+        with urllib.request.urlopen(f"{base_url}/health", timeout=0.6) as response:
+            return 200 <= response.status < 500
+    except (OSError, urllib.error.URLError, TimeoutError):
+        return False
+
+
+def run_ace_repaint_task(
+    *,
+    source_audio_path: Path,
+    output_path: Path,
+    lyric: str,
+    start_ms: int,
+    end_ms: int,
+    progress,
+    base_url: str = ACE_API_BASE_URL,
+) -> Path:
+    import requests
+
+    if not source_audio_path.exists():
+        raise FileNotFoundError(source_audio_path)
+    duration_seconds = max(10.0, (end_ms - start_ms) / 1000.0)
+    language = "zh" if any("\u4e00" <= char <= "\u9fff" for char in lyric) else "en"
+    form_data = {
+        "prompt": "保持原歌曲音色、旋律和伴奏质感，只把选中片段改唱为新歌词。",
+        "lyrics": lyric,
+        "task_type": "repaint",
+        "repainting_start": f"{max(0.0, start_ms / 1000.0):.3f}",
+        "repainting_end": f"{max(0.1, end_ms / 1000.0):.3f}",
+        "audio_duration": f"{duration_seconds:.3f}",
+        "vocal_language": language,
+        "thinking": "false",
+        "inference_steps": "8",
+        "batch_size": "1",
+        "audio_format": "wav",
+    }
+    with source_audio_path.open("rb") as audio_file:
+        response = requests.post(
+            f"{base_url}/release_task",
+            data=form_data,
+            files={"src_audio": (source_audio_path.name, audio_file, "audio/wav")},
+            timeout=60,
+        )
+    response.raise_for_status()
+    payload = response.json()
+    data = payload.get("data", payload)
+    task_id = data.get("task_id") if isinstance(data, dict) else None
+    if not task_id:
+        raise RuntimeError(f"ACE-Step 未返回任务 ID：{payload}")
+
+    deadline = time.monotonic() + 60 * 30
+    last_message = ""
+    while time.monotonic() < deadline:
+        time.sleep(5.0)
+        query = requests.post(
+            f"{base_url}/query_result",
+            json={"task_id_list": [task_id]},
+            timeout=30,
+        )
+        query.raise_for_status()
+        query_payload = query.json()
+        items = query_payload.get("data", query_payload)
+        if isinstance(items, dict):
+            items = items.get("data") or items.get("result") or []
+        item = items[0] if isinstance(items, list) and items else {}
+        status = item.get("status")
+        progress(55, "ACE-Step 正在 CPU 推理，可能需要较长时间")
+        if item.get("progress_text") and item.get("progress_text") != last_message:
+            last_message = str(item.get("progress_text"))
+            progress(58, f"ACE-Step：{last_message}")
+        if status == 2:
+            raise RuntimeError(f"ACE-Step 生成失败：{item}")
+        if status == 1:
+            audio_url = extract_ace_audio_url(item)
+            if not audio_url:
+                raise RuntimeError(f"ACE-Step 结果中没有音频地址：{item}")
+            if audio_url.startswith("/"):
+                audio_url = f"{base_url}{audio_url}"
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with requests.get(audio_url, stream=True, timeout=120) as download:
+                download.raise_for_status()
+                with output_path.open("wb") as out_file:
+                    for chunk in download.iter_content(chunk_size=1024 * 256):
+                        if chunk:
+                            out_file.write(chunk)
+            return output_path
+    raise TimeoutError("ACE-Step 生成超时，请稍后在工作台查看任务状态。")
+
+
+def extract_ace_audio_url(item: dict) -> str | None:
+    for key in ("first_audio_path", "file", "audio_path"):
+        value = item.get(key)
+        if isinstance(value, str) and value:
+            return value
+    result = item.get("result")
+    if isinstance(result, str) and result.strip():
+        try:
+            parsed = json.loads(result)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, list) and parsed:
+            return extract_ace_audio_url(parsed[0])
+        if isinstance(parsed, dict):
+            return extract_ace_audio_url(parsed)
+    return None
 
 
 def resample_audio(audio, source_rate: int, target_rate: int):

@@ -928,13 +928,13 @@ ApplicationWindow {
 
                 ComboBox {
                     Layout.fillWidth: true
-                    model: root.bridge && root.bridge.aceWebReady ? ["ACE-Step Web 工作台（已启动）", "本机轻量改词唱（备用）"] : ["本机轻量改词唱（备用）"]
+                    model: root.bridge && root.bridge.aceApiReady ? ["ACE-Step 真唱改写（自动调用）"] : (root.bridge && root.bridge.aceWebReady ? ["ACE-Step 已启动但未开自动接口", "本机轻量改词唱（备用）"] : ["本机轻量改词唱（备用）"])
                     currentIndex: 0
                     enabled: false
                 }
 
                 Text {
-                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。当前应用内按钮仍使用轻量预览；ACE 真唱请先打开工作台，在网页中用 Repaint/改写片段模式测试。" : "改词唱后端：本机轻量改词唱（备用）"
+                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。启用 ACE 自动接口后，点击下方按钮会直接把选中句子提交给 ACE 真唱改写；CPU 模式可能需要较长时间。" : "改词唱后端：本机轻量改词唱（备用）"
                     color: root.textDim
                     font.pixelSize: 12
                     wrapMode: Text.WordWrap
@@ -991,7 +991,7 @@ ApplicationWindow {
                 }
 
                 PrimaryButton {
-                    text: root.bridge && root.bridge.lyricRewriteBusy ? "正在智能改唱" : "启动智能改唱并修补"
+                    text: root.bridge && root.bridge.lyricRewriteBusy ? "正在智能改唱" : (root.bridge && root.bridge.aceApiReady ? "调用 ACE 真唱并修补" : "启动智能改唱并修补")
                     enabled: root.rewriteLyricIndex >= 0 && !(root.bridge && root.bridge.lyricRewriteBusy)
                     Layout.fillWidth: true
                     onClicked: if (root.bridge) root.bridge.generateLyricRewrite(root.rewriteLyricIndex, rightRewriteText.text)
