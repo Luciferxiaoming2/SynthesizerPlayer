@@ -1,10 +1,12 @@
 from pathlib import Path
 import json
 
+import numpy as np
 import pytest
 
 from ui.main_window import (
     WorkbenchBridge,
+    fit_generated_audio_segment,
     format_lyric_rewrite_error,
     format_user_error,
     lyrics_backend_label,
@@ -30,6 +32,16 @@ def test_workbench_bridge_generates_and_exports_mock_audio(tmp_path):
     assert (tmp_path / "harness" / "mock_data" / "instrumental.wav").exists()
     assert (tmp_path / "harness" / "mock_data" / "ui_export_mix.wav").exists()
     assert "已导出" in bridge.status
+
+
+def test_local_tts_rewrite_segment_pads_instead_of_extreme_time_stretch():
+    source = np.ones((1_000, 1), dtype=np.float32) * 0.25
+
+    fitted = fit_generated_audio_segment(source, 10_000, 1, allow_time_stretch=False)
+
+    assert fitted.shape == (10_000, 1)
+    assert np.allclose(fitted[:1_000], source)
+    assert float(np.max(np.abs(fitted[1_000:]))) == 0.0
 
 
 def test_workbench_bridge_defaults_to_portable_import_library(tmp_path):

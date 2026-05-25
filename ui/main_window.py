@@ -263,7 +263,12 @@ class LyricRewriteWorker(QObject):
             segment, segment_rate = read_audio(synthesized.output_path)
             if segment_rate != sample_rate:
                 segment = resample_audio(segment, segment_rate, sample_rate)
-            segment = fit_generated_audio_segment(segment, end_frame - start_frame, vocal.shape[1])
+            segment = fit_generated_audio_segment(
+                segment,
+                end_frame - start_frame,
+                vocal.shape[1],
+                allow_time_stretch=self._backend_config.backend != "local_tts",
+            )
             segment = apply_source_energy_envelope(vocal[start_frame:end_frame], segment, sample_rate)
             output = vocal.copy()
             output[start_frame:end_frame] = crossfade_replace(
@@ -2442,7 +2447,13 @@ def fit_audio_segment(audio, frame_count: int, channel_count: int):
     return np.concatenate([audio, padding], axis=0)
 
 
-def fit_generated_audio_segment(audio, frame_count: int, channel_count: int):
+def fit_generated_audio_segment(
+    audio,
+    frame_count: int,
+    channel_count: int,
+    *,
+    allow_time_stretch: bool = True,
+):
     import numpy as np
 
     if audio.shape[1] != channel_count:
@@ -2455,6 +2466,8 @@ def fit_generated_audio_segment(audio, frame_count: int, channel_count: int):
     if audio.shape[0] <= 1 or frame_count <= 1:
         return fit_audio_segment(audio, frame_count, channel_count)
     if abs(audio.shape[0] - frame_count) <= max(256, frame_count // 20):
+        return fit_audio_segment(audio, frame_count, channel_count)
+    if not allow_time_stretch:
         return fit_audio_segment(audio, frame_count, channel_count)
 
     source_positions = np.linspace(0.0, 1.0, audio.shape[0], dtype=np.float32)
