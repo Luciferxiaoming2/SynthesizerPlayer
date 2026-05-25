@@ -34,6 +34,28 @@ def test_workbench_bridge_generates_and_exports_mock_audio(tmp_path):
     assert "已导出" in bridge.status
 
 
+def test_workbench_bridge_reports_ace_web_status(tmp_path, monkeypatch):
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def fake_urlopen(url, timeout):
+        assert url == "http://127.0.0.1:7860/config"
+        assert timeout <= 0.5
+        return FakeResponse()
+
+    monkeypatch.setattr("ui.main_window.urllib.request.urlopen", fake_urlopen)
+    bridge = WorkbenchBridge(tmp_path)
+
+    assert bridge.aceWebReady is True
+    assert "ACE-Step Web 工作台已运行" in bridge.aceWebStatus
+
+
 def test_local_tts_rewrite_segment_pads_instead_of_extreme_time_stretch():
     source = np.ones((1_000, 1), dtype=np.float32) * 0.25
 

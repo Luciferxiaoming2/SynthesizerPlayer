@@ -928,17 +928,39 @@ ApplicationWindow {
 
                 ComboBox {
                     Layout.fillWidth: true
-                    model: ["本机轻量改词唱（无需显卡）"]
+                    model: root.bridge && root.bridge.aceWebReady ? ["ACE-Step Web 工作台（已启动）", "本机轻量改词唱（备用）"] : ["本机轻量改词唱（备用）"]
                     currentIndex: 0
                     enabled: false
                 }
 
                 Text {
-                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。当前会生成本机试听音频并替换选中句子；效果是轻量预览，不是云端大模型真唱。" : "改词唱后端：本机轻量改词唱（无需显卡）"
+                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。当前应用内按钮仍使用轻量预览；ACE 真唱请先打开工作台，在网页中用 Repaint/改写片段模式测试。" : "改词唱后端：本机轻量改词唱（备用）"
                     color: root.textDim
                     font.pixelSize: 12
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    SecondaryButton {
+                        text: root.bridge && root.bridge.aceWebReady ? "打开 ACE 工作台" : "检测 ACE"
+                        Layout.fillWidth: true
+                        onClicked: {
+                            if (!root.bridge)
+                                return
+                            if (root.bridge.aceWebReady)
+                                root.bridge.openAceWorkbench()
+                            else
+                                root.bridge.refreshAceWorkbenchStatus()
+                        }
+                    }
+                    SecondaryButton {
+                        text: "刷新状态"
+                        Layout.fillWidth: true
+                        onClicked: if (root.bridge) root.bridge.refreshAceWorkbenchStatus()
+                    }
                 }
 
                 Rectangle {

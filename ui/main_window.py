@@ -10,6 +10,8 @@ import shutil
 import sys
 import time
 import traceback
+import urllib.error
+import urllib.request
 
 import soundfile as sf
 from PyQt6.QtCore import QCoreApplication, QObject, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
@@ -359,6 +361,8 @@ class WorkbenchBridge(QObject):
         self._lyric_rewrite_versions: list[Path] = []
         self._lyric_rewrite_thread: QThread | None = None
         self._lyric_rewrite_worker: LyricRewriteWorker | None = None
+        self._ace_service_last_check = 0.0
+        self._ace_service_reachable = False
         self._playback: DualTrackPlaybackEngine | None = None
         self._vocal_gain = 1.0
         self._instrumental_gain = 0.8
@@ -545,7 +549,16 @@ class WorkbenchBridge(QObject):
         except Exception as exc:
             return f"改词唱配置有误：{exc}"
         source = "自动检测" if config.config_path is None else config.config_path.name
-        return f"改词唱后端：{config.label}（{source}）。{config.readiness_label}"
+        ace_status = self._ace_web_status_label()
+        return f"改词唱后端：{config.label}（{source}）。{config.readiness_label}。{ace_status}"
+
+    @pyqtProperty(bool, notify=lyricRewriteChanged)
+    def aceWebReady(self) -> bool:
+        return self._is_ace_web_ready()
+
+    @pyqtProperty(str, notify=lyricRewriteChanged)
+    def aceWebStatus(self) -> str:
+        return self._ace_web_status_label()
 
     @pyqtProperty("QStringList", notify=lyricRewriteChanged)
     def lyricRewriteVersionLabels(self) -> list[str]:
@@ -1626,6 +1639,27 @@ class WorkbenchBridge(QObject):
         base_dir = self._lyrics_path.parent if self._lyrics_path else self._songs_root
         self._open_folder(base_dir / "ai_singer", "改词唱版本文件夹")
 
+    @pyqtSlot()
+    def openAceWorkbench(self) -> None:
+        url = QUrl("http://127.0.0.1:7860")
+        opened = QDesktopServices.openUrl(url)
+        if opened:
+            if self._is_ace_web_ready(force=True):
+                self._set_status("已打开 ACE-Step 工作台。请在网页中选择 Repaint/改写片段模式进行真实 AI 生成测试。")
+            else:
+                self._set_status("已尝试打开 ACE-Step 工作台；如果浏览器打不开，请先启动 ACE 模型到 7860 端口。")
+        else:
+            self._set_status("无法自动打开 ACE-Step 工作台，请手动访问：http://127.0.0.1:7860")
+
+    @pyqtSlot()
+    def refreshAceWorkbenchStatus(self) -> None:
+        ready = self._is_ace_web_ready(force=True)
+        self.lyricRewriteChanged.emit()
+        if ready:
+            self._set_status("ACE-Step 工作台已运行：http://127.0.0.1:7860")
+        else:
+            self._set_status("未检测到 ACE-Step 工作台。请先在 ACE-Step-1.5 目录执行 uv run acestep。")
+
     def _open_folder(self, folder: Path, label: str) -> None:
         folder.mkdir(parents=True, exist_ok=True)
         opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
@@ -1633,6 +1667,23 @@ class WorkbenchBridge(QObject):
             self._set_status(f"已打开{label}：{folder}")
         else:
             self._set_status(f"无法自动打开{label}，请手动进入：{folder}")
+
+    def _is_ace_web_ready(self, *, force: bool = False) -> bool:
+        now = time.monotonic()
+        if not force and now - self._ace_service_last_check < 5.0:
+            return self._ace_service_reachable
+        self._ace_service_last_check = now
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:7860/config", timeout=0.35) as response:
+                self._ace_service_reachable = 200 <= response.status < 500
+        except (OSError, urllib.error.URLError, TimeoutError):
+            self._ace_service_reachable = False
+        return self._ace_service_reachable
+
+    def _ace_web_status_label(self) -> str:
+        if self._is_ace_web_ready():
+            return "ACE-Step Web 工作台已运行，可点击右侧按钮打开浏览器测试真唱生成"
+        return "未检测到 ACE-Step Web 工作台；如需真唱生成，请先启动 uv run acestep"
 
     def _load_first_song_if_needed(self) -> None:
         if self._playback is not None or self._current_song_index >= 0:

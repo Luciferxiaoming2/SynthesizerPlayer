@@ -83,8 +83,10 @@ save/
 
 # Heavy local plugins and model weights
 plugins/models/*
+plugins/runtime/*
 plugins/vst3/*
 !plugins/models/.gitkeep
+!plugins/runtime/.gitkeep
 !plugins/vst3/.gitkeep
 
 # Common AI model/checkpoint formats
