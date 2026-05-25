@@ -8,6 +8,7 @@ from ui.main_window import (
     WorkbenchBridge,
     extract_ace_audio_url,
     fit_generated_audio_segment,
+    process_ids_on_port,
     format_lyric_rewrite_error,
     format_user_error,
     lyrics_backend_label,
@@ -73,6 +74,27 @@ def test_extract_ace_audio_url_from_nested_result_payload():
     }
 
     assert extract_ace_audio_url(payload) == "/v1/audio?path=demo.wav"
+
+
+def test_process_ids_on_port_parses_windows_netstat(monkeypatch):
+    class Result:
+        stdout = """
+  TCP    127.0.0.1:7860         0.0.0.0:0              LISTENING       1234
+  TCP    127.0.0.1:9000         0.0.0.0:0              LISTENING       5678
+"""
+
+    monkeypatch.setattr("ui.main_window.subprocess.run", lambda *_args, **_kwargs: Result())
+
+    assert process_ids_on_port(7860) == [1234]
+
+
+def test_workbench_bridge_finds_ace_runtime_dir(tmp_path):
+    runtime = tmp_path / "plugins" / "runtime" / "ACE-Step-1.5"
+    (runtime / "acestep").mkdir(parents=True)
+    (runtime / "pyproject.toml").write_text("[project]\nname='ace'\n", encoding="utf-8")
+    bridge = WorkbenchBridge(tmp_path)
+
+    assert bridge._ace_runtime_dir() == runtime
 
 
 def test_local_tts_rewrite_segment_pads_instead_of_extreme_time_stretch():

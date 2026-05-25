@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 import traceback
@@ -14,7 +15,7 @@ import urllib.error
 import urllib.request
 
 import soundfile as sf
-from PyQt6.QtCore import QCoreApplication, QObject, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QCoreApplication, QObject, QProcess, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from PyQt6.QtQml import QQmlApplicationEngine
 
@@ -415,6 +416,10 @@ class WorkbenchBridge(QObject):
         self._ace_service_reachable = False
         self._ace_api_last_check = 0.0
         self._ace_api_reachable = False
+        self._ace_process: QProcess | None = None
+        self._ace_startup_busy = False
+        self._ace_startup_progress = 0
+        self._ace_startup_status = "ACE 模型未由本应用启动"
         self._playback: DualTrackPlaybackEngine | None = None
         self._vocal_gain = 1.0
         self._instrumental_gain = 0.8
@@ -615,6 +620,18 @@ class WorkbenchBridge(QObject):
     @pyqtProperty(bool, notify=lyricRewriteChanged)
     def aceApiReady(self) -> bool:
         return self._is_ace_api_ready()
+
+    @pyqtProperty(bool, notify=lyricRewriteChanged)
+    def aceStartupBusy(self) -> bool:
+        return self._ace_startup_busy
+
+    @pyqtProperty(int, notify=lyricRewriteChanged)
+    def aceStartupProgress(self) -> int:
+        return self._ace_startup_progress
+
+    @pyqtProperty(str, notify=lyricRewriteChanged)
+    def aceStartupStatus(self) -> str:
+        return self._ace_startup_status
 
     @pyqtProperty("QStringList", notify=lyricRewriteChanged)
     def lyricRewriteVersionLabels(self) -> list[str]:
@@ -1718,6 +1735,66 @@ class WorkbenchBridge(QObject):
             self._set_status("无法自动打开 ACE-Step 工作台，请手动访问：http://127.0.0.1:7860")
 
     @pyqtSlot()
+    def startAceModel(self) -> None:
+        if self._ace_startup_busy:
+            self._set_status("ACE 模型正在启动中，请稍等。")
+            return
+        if self._is_ace_api_ready(force=True):
+            self._set_ace_startup_state(False, 100, "ACE 模型已启动，自动改词接口可用")
+            self._set_status("ACE 模型已启动，可以直接调用真唱改写。")
+            return
+
+        runtime_dir = self._ace_runtime_dir()
+        if runtime_dir is None:
+            self._set_status("未找到 ACE-Step-1.5 运行目录，请先放到 plugins/runtime/ACE-Step-1.5。")
+            return
+        uv_path = shutil.which("uv")
+        if uv_path is None:
+            self._set_status("未找到 uv 命令，无法自动启动 ACE。请先确认 uv 已加入 PATH。")
+            return
+
+        self._set_ace_startup_state(True, 5, "正在检查 7860 端口")
+        killed = kill_processes_on_port(7860)
+        if killed:
+            self._set_ace_startup_state(True, 12, f"已释放 7860 端口：{', '.join(str(pid) for pid in killed)}")
+        else:
+            self._set_ace_startup_state(True, 12, "7860 端口可用，正在启动 ACE")
+
+        process = QProcess(self)
+        process.setWorkingDirectory(str(runtime_dir))
+        process.setProgram(uv_path)
+        process.setArguments(["run", "acestep", "--enable-api", "--server-name", "127.0.0.1", "--port", "7860"])
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        process.readyReadStandardOutput.connect(self._handle_ace_process_output)
+        process.errorOccurred.connect(self._handle_ace_process_error)
+        process.finished.connect(self._handle_ace_process_finished)
+        self._ace_process = process
+        process.start()
+        if not process.waitForStarted(3000):
+            self._set_ace_startup_state(False, 0, "ACE 启动失败：进程未能启动")
+            self._ace_process = None
+            return
+        self._set_ace_startup_state(True, 18, "ACE 进程已启动，正在加载模型")
+        self._set_status("正在启动 ACE 模型，CPU 模式可能需要一段时间。")
+
+    @pyqtSlot()
+    def stopAceModel(self) -> None:
+        stopped: list[int] = []
+        if self._ace_process is not None and self._ace_process.state() != QProcess.ProcessState.NotRunning:
+            pid = int(self._ace_process.processId())
+            self._ace_process.terminate()
+            if not self._ace_process.waitForFinished(5000):
+                self._ace_process.kill()
+            if pid:
+                stopped.append(pid)
+        stopped.extend(pid for pid in kill_processes_on_port(7860) if pid not in stopped)
+        self._ace_process = None
+        self._ace_api_reachable = False
+        self._ace_service_reachable = False
+        self._set_ace_startup_state(False, 0, "ACE 模型已停止" if stopped else "未发现正在运行的 ACE 模型")
+        self._set_status(self._ace_startup_status)
+
+    @pyqtSlot()
     def refreshAceWorkbenchStatus(self) -> None:
         ready = self._is_ace_web_ready(force=True)
         api_ready = self._is_ace_api_ready(force=True)
@@ -1728,6 +1805,62 @@ class WorkbenchBridge(QObject):
             self._set_status("ACE-Step 工作台已运行，但自动接口未开启。请用 uv run acestep --enable-api 重启。")
         else:
             self._set_status("未检测到 ACE-Step 工作台。请先在 ACE-Step-1.5 目录执行 uv run acestep。")
+
+    def _ace_runtime_dir(self) -> Path | None:
+        candidates = [
+            self._root / "plugins" / "runtime" / "ACE-Step-1.5",
+            self._root / "_internal" / "plugins" / "runtime" / "ACE-Step-1.5",
+        ]
+        if len(self._root.parents) >= 2:
+            candidates.append(self._root.parents[1] / "plugins" / "runtime" / "ACE-Step-1.5")
+        for candidate in candidates:
+            if (candidate / "pyproject.toml").exists() and (candidate / "acestep").exists():
+                return candidate
+        return None
+
+    def _set_ace_startup_state(self, busy: bool, progress: int, status: str) -> None:
+        self._ace_startup_busy = busy
+        self._ace_startup_progress = max(0, min(100, int(progress)))
+        self._ace_startup_status = status
+        self.lyricRewriteChanged.emit()
+
+    def _handle_ace_process_output(self) -> None:
+        if self._ace_process is None:
+            return
+        raw = bytes(self._ace_process.readAllStandardOutput()).decode("utf-8", errors="ignore")
+        for line in raw.splitlines():
+            self._update_ace_startup_from_log(line.strip())
+
+    def _update_ace_startup_from_log(self, line: str) -> None:
+        if not line:
+            return
+        lower = line.lower()
+        if "gpu configuration detected" in lower:
+            self._set_ace_startup_state(True, 35, "已完成硬件检测，正在准备模型")
+        elif "no gpu detected" in lower or "running on cpu" in lower:
+            self._set_ace_startup_state(True, 42, "未检测到独显，ACE 正在使用 CPU 模式")
+        elif "creating gradio interface" in lower:
+            self._set_ace_startup_state(True, 62, "正在创建 ACE 工作台界面")
+        elif "launching server" in lower:
+            self._set_ace_startup_state(True, 78, "正在启动 ACE 本地服务")
+        elif "running on local url" in lower:
+            self._set_ace_startup_state(True, 88, "ACE 网页已启动，正在等待自动接口")
+        elif "api endpoints enabled" in lower:
+            self._ace_api_reachable = True
+            self._ace_service_reachable = True
+            self._set_ace_startup_state(False, 100, "ACE 模型已启动，自动改词接口可用")
+            self._set_status("ACE 模型已启动，可以在右侧直接调用真唱改写。")
+        elif "error" in lower or "traceback" in lower:
+            self._set_ace_startup_state(True, max(self._ace_startup_progress, 20), f"ACE 启动日志：{line[:80]}")
+
+    def _handle_ace_process_error(self, error) -> None:
+        self._set_ace_startup_state(False, 0, f"ACE 启动失败：{error}")
+        self._set_status(self._ace_startup_status)
+
+    def _handle_ace_process_finished(self, exit_code: int, _exit_status) -> None:
+        if self._ace_startup_busy:
+            self._set_ace_startup_state(False, 0, f"ACE 进程已退出，退出码：{exit_code}")
+            self._set_status(self._ace_startup_status)
 
     def _open_folder(self, folder: Path, label: str) -> None:
         folder.mkdir(parents=True, exist_ok=True)
@@ -2617,6 +2750,57 @@ def is_ace_api_ready(base_url: str = ACE_API_BASE_URL) -> bool:
             return 200 <= response.status < 500
     except (OSError, urllib.error.URLError, TimeoutError):
         return False
+
+
+def process_ids_on_port(port: int) -> list[int]:
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+        )
+    except OSError:
+        return []
+    pids: set[int] = set()
+    marker = f":{port}"
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        local_address = parts[1]
+        state = parts[-2] if len(parts) >= 5 else ""
+        pid_text = parts[-1]
+        if marker not in local_address or state.upper() != "LISTENING":
+            continue
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if pid > 0 and pid != os.getpid():
+            pids.add(pid)
+    return sorted(pids)
+
+
+def kill_processes_on_port(port: int) -> list[int]:
+    killed: list[int] = []
+    for pid in process_ids_on_port(port):
+        try:
+            result = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/F", "/T"],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+            )
+        except OSError:
+            continue
+        if result.returncode == 0:
+            killed.append(pid)
+    return killed
 
 
 def run_ace_repaint_task(
