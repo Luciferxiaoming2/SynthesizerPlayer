@@ -47,7 +47,20 @@ def test_tone_deaf_render_buffer_preserves_alignment():
 
     assert rendered.frame_count == buffers.frame_count
     assert rendered.sample_rate == buffers.sample_rate
-    np.testing.assert_array_equal(rendered.instrumental, buffers.instrumental)
+    np.testing.assert_allclose(rendered.instrumental, buffers.instrumental, atol=1e-5)
+
+
+def test_tone_deaf_render_buffer_suppresses_instrumental_vocal_bleed():
+    buffers = make_buffers()
+    leaked = buffers.with_instrumental(buffers.instrumental + buffers.vocal * 0.5)
+    rendered = ToneDeafBufferCache().render_buffer(
+        leaked,
+        ToneDeafConfig(drift_ratio=0.9, random_seed=3),
+    )
+
+    before = abs(float(np.dot(leaked.instrumental[:, 0], leaked.vocal[:, 0])))
+    after = abs(float(np.dot(rendered.instrumental[:, 0], leaked.vocal[:, 0])))
+    assert after < before * 0.30
 
 
 def test_playback_engine_can_replace_buffers_keep_position():

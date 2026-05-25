@@ -44,7 +44,10 @@ def project_audio_tool_dirs(root: Path) -> list[Path]:
     """
 
     return [
+        root / "plugins" / "models" / "rubberband",
         root / "plugins" / "models" / "ffmpeg",
+        root / "_internal" / "plugins" / "models" / "rubberband",
+        root / "_internal" / "plugins" / "models" / "ffmpeg",
         root / "源代码" / "Synthesizer Player" / "Synthesizer Player" / "ffmpeg" / "bin",
     ]
 

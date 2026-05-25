@@ -45,8 +45,11 @@ def test_resolve_audio_tool_returns_local_path(tmp_path):
 def test_project_audio_tool_dirs_include_migrated_and_legacy_locations(tmp_path):
     dirs = project_audio_tool_dirs(tmp_path)
 
-    assert dirs[0] == tmp_path / "plugins" / "models" / "ffmpeg"
-    assert dirs[1] == (
+    assert dirs[0] == tmp_path / "plugins" / "models" / "rubberband"
+    assert dirs[1] == tmp_path / "plugins" / "models" / "ffmpeg"
+    assert dirs[2] == tmp_path / "_internal" / "plugins" / "models" / "rubberband"
+    assert dirs[3] == tmp_path / "_internal" / "plugins" / "models" / "ffmpeg"
+    assert dirs[4] == (
         tmp_path / "源代码" / "Synthesizer Player" / "Synthesizer Player" / "ffmpeg" / "bin"
     )
 

@@ -75,6 +75,7 @@ class FasterWhisperConfig:
     language: str | None = None
     beam_size: int = 8
     best_of: int = 5
+    initial_prompt: str = "歌词只输出歌曲中实际唱出的内容。中文请使用简体中文，英文保持英文。"
 
 
 class FasterWhisperLyricsTranscriber(LyricsTranscriber):
@@ -102,6 +103,7 @@ class FasterWhisperLyricsTranscriber(LyricsTranscriber):
             language=self._config.language,
             beam_size=self._config.beam_size,
             best_of=self._config.best_of,
+            initial_prompt=self._config.initial_prompt,
             condition_on_previous_text=False,
             no_speech_threshold=0.55,
             compression_ratio_threshold=2.4,
@@ -247,12 +249,68 @@ TRADITIONAL_TO_SIMPLIFIED = str.maketrans(
     }
 )
 
+TRADITIONAL_TO_SIMPLIFIED.update(
+    str.maketrans(
+        {
+            "縮": "缩",
+            "堅": "坚",
+            "憶": "忆",
+            "選": "选",
+            "卻": "却",
+            "證": "证",
+            "臉": "脸",
+            "龐": "庞",
+            "過": "过",
+            "這": "这",
+            "來": "来",
+            "個": "个",
+            "們": "们",
+            "後": "后",
+            "讓": "让",
+            "無": "无",
+            "從": "从",
+            "對": "对",
+            "應": "应",
+            "發": "发",
+            "現": "现",
+            "裡": "里",
+            "裏": "里",
+            "著": "着",
+            "點": "点",
+            "體": "体",
+            "樂": "乐",
+            "聲": "声",
+            "傷": "伤",
+            "離": "离",
+            "難": "难",
+            "關": "关",
+            "開": "开",
+            "長": "长",
+            "聽": "听",
+            "說": "说",
+            "話": "话",
+            "愛": "爱",
+            "夢": "梦",
+            "為": "为",
+            "會": "会",
+            "還": "还",
+            "時": "时",
+            "間": "间",
+            "風": "风",
+            "雲": "云",
+            "誰": "谁",
+            "嗎": "吗",
+            "麼": "么",
+        }
+    )
+)
+
 
 def normalize_generated_lyric_text(text: str) -> str:
     normalized = unicodedata.normalize("NFKC", text)
     for source, target in TRADITIONAL_PHRASES_TO_SIMPLIFIED.items():
         normalized = normalized.replace(source, target)
-    normalized = normalized.translate(TRADITIONAL_TO_SIMPLIFIED)
+    normalized = convert_generated_chinese_to_simplified(normalized)
     cleaned = "".join(
         char for char in normalized.strip()
         if char == "\t" or not unicodedata.category(char).startswith("C")
@@ -262,9 +320,21 @@ def normalize_generated_lyric_text(text: str) -> str:
     return cleaned
 
 
+def convert_generated_chinese_to_simplified(text: str) -> str:
+    try:
+        from opencc import OpenCC
+    except ImportError:
+        return text.translate(TRADITIONAL_TO_SIMPLIFIED)
+    return OpenCC("t2s").convert(text).translate(TRADITIONAL_TO_SIMPLIFIED)
+
+
 def is_instruction_hallucination(text: str) -> bool:
     compact = text.replace(" ", "").replace(",", "，").replace(".", "。")
     phrases = (
+        "歌词只输出歌曲中实际唱出的内容",
+        "只输出歌曲中实际唱出的内容",
+        "中文请使用简体中文",
+        "英文保持英文",
         "请使用简体中文或英文",
         "不要使用繁体中文",
         "使用简体中文",

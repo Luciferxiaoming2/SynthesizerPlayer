@@ -27,6 +27,7 @@ package = [
 ]
 asr = [
     "faster-whisper>=1.1",
+    "opencc-python-reimplemented>=0.1.7",
 ]
 f0 = [
     "aubio-ledfx>=0.4.11",

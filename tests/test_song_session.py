@@ -29,6 +29,18 @@ def test_load_song_session_reads_lyrics_and_offset(tmp_path: Path):
     assert session.lyric_sync().state_at(1_600).current_text == "A"
 
 
+def test_load_song_session_skips_prompt_leakage(tmp_path: Path):
+    asset = make_song(tmp_path)
+    asset.lyrics_path.write_text(
+        "[00:00.000]歌词只输出歌曲中实际唱出的内容。\n[00:01.000]real lyric",
+        encoding="utf-8",
+    )
+
+    session = load_song_session(asset)
+
+    assert session.lyrics.texts() == ["real lyric"]
+
+
 def test_select_song_by_name_scans_library(tmp_path: Path):
     make_song(tmp_path)
 
@@ -36,4 +48,3 @@ def test_select_song_by_name_scans_library(tmp_path: Path):
 
     assert session.asset.name == "Song A"
     assert session.asset.vocal_path.name == "人声.mp3"
-

@@ -35,6 +35,40 @@ def test_workbench_bridge_defaults_to_portable_import_library(tmp_path):
     assert bridge.separatorBackend == "demucs"
 
 
+def test_workbench_bridge_migrates_legacy_projects_into_save(tmp_path):
+    legacy_project = tmp_path / "projects" / "Old Song"
+    legacy_project.mkdir(parents=True)
+    (legacy_project / "stems").mkdir()
+    (legacy_project / "stems" / "vocal.wav").write_bytes(b"vocal")
+    (legacy_project / "stems" / "instrumental.wav").write_bytes(b"inst")
+    (legacy_project / "lyrics.lrc").write_text("[00:00.000]line", encoding="utf-8")
+    (legacy_project / "project.json").write_text(
+        json.dumps(
+            {
+                "vocal_path": str(legacy_project / "stems" / "vocal.wav"),
+                "instrumental_path": str(legacy_project / "stems" / "instrumental.wav"),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bridge = WorkbenchBridge(tmp_path)
+
+    assert not (tmp_path / "projects").exists()
+    assert (tmp_path / "save" / "Old Song").exists()
+    assert bridge.songNames == ["Old Song"]
+
+
+def test_workbench_bridge_migrates_root_wave_outputs_into_save(tmp_path):
+    legacy_output = tmp_path / "found"
+    legacy_output.write_bytes(b"RIFF\x24\x00\x00\x00WAVEfmt ")
+
+    WorkbenchBridge(tmp_path)
+
+    assert not legacy_output.exists()
+    assert (tmp_path / "save" / "_legacy_root_outputs" / "found.wav").exists()
+
+
 def test_workbench_bridge_auto_loads_first_saved_song_on_startup(tmp_path):
     setup_bridge = WorkbenchBridge(tmp_path)
     setup_bridge.generateMockAudio()
@@ -54,6 +88,7 @@ def test_workbench_bridge_auto_loads_first_saved_song_on_startup(tmp_path):
     assert bridge.vocalPath == str(vocal)
     assert bridge.instrumentalPath == str(instrumental)
     assert bridge.lyricsPath == str(lyrics)
+    assert bridge.songDurationLabels == ["00:02"]
     assert bridge.playbackTime != "00:00 / 00:00"
 
 
@@ -99,7 +134,7 @@ def test_workbench_bridge_generates_lyric_rewrite_preview(tmp_path):
     assert "新的歌词试听" in bridge.lyricLines
     assert bridge.vocalPath == bridge.lyricRewritePreviewPath
     assert bridge.vocalPath != original_path
-    assert "改词唱预览已套用" in bridge.status
+    assert "改词唱音频已套用" in bridge.status
     original_audio, _ = read_audio(Path(original_path))
     rewrite_audio, _ = read_audio(Path(bridge.vocalPath))
     assert original_audio.shape == rewrite_audio.shape
@@ -109,14 +144,99 @@ def test_workbench_bridge_generates_lyric_rewrite_preview(tmp_path):
 
     assert bridge.vocalPath == original_path
     assert bridge.lyricRewritePreviewPath == ""
+    assert bridge.lyricRewriteVersionLabels == []
     assert "跑调预览" in (tmp_path / "harness" / "mock_data" / "lyrics.lrc").read_text(encoding="utf-8")
     assert "跑调预览" in bridge.lyricLines
+
+
+def test_workbench_bridge_recovers_rewrite_vocal_from_loaded_song(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+    original_path = bridge.vocalPath
+    bridge.vocalPath = str(tmp_path / "missing" / "vocal.wav")
+
+    bridge.generateLyricRewrite(1, "自动恢复音轨")
+
+    assert "请先导入" not in bridge.status
+    assert bridge.lyricRewritePreviewPath.endswith("vocal_rewrite_002.wav")
+    assert Path(bridge.lyricRewritePreviewPath).exists()
+    assert Path(original_path).exists()
+
+
+def test_workbench_bridge_keeps_multiple_lyric_rewrite_versions(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+
+    bridge.generateLyricRewrite(1, "第一版试听")
+    first_path = Path(bridge.lyricRewritePreviewPath)
+    bridge.generateLyricRewrite(1, "第二版试听")
+    second_path = Path(bridge.lyricRewritePreviewPath)
+
+    assert first_path.exists()
+    assert second_path.exists()
+    assert first_path != second_path
+    assert len(bridge.lyricRewriteVersionLabels) == 2
+    assert "第二版试听" in bridge.lyricLines
+
+    first_index = next(
+        index for index, label in enumerate(bridge.lyricRewriteVersionLabels)
+        if "第一版试听" in label
+    )
+    bridge.applyLyricRewriteVersion(first_index)
+
+    assert bridge.vocalPath == str(first_path)
+    assert "第一版试听" in bridge.lyricLines
+
+
+def test_workbench_bridge_deletes_lyric_rewrite_version(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+
+    bridge.generateLyricRewrite(1, "第一版试听")
+    first_path = Path(bridge.lyricRewritePreviewPath)
+    bridge.generateLyricRewrite(1, "第二版试听")
+    second_path = Path(bridge.lyricRewritePreviewPath)
+    labels = bridge.lyricRewriteVersionLabels
+    first_index = next(index for index, label in enumerate(labels) if "第一版试听" in label)
+
+    bridge.deleteLyricRewriteVersion(first_index)
+
+    assert not first_path.exists()
+    assert not first_path.with_suffix(".json").exists()
+    assert second_path.exists()
+    assert len(bridge.lyricRewriteVersionLabels) == 1
+
+
+def test_workbench_bridge_clears_lyric_rewrite_versions(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+
+    bridge.generateLyricRewrite(1, "第一版试听")
+    bridge.generateLyricRewrite(1, "第二版试听")
+
+    bridge.clearLyricRewriteVersions()
+
+    assert bridge.lyricRewriteVersionLabels == []
+    assert not (tmp_path / "harness" / "mock_data" / "ai_singer").exists() or not list(
+        (tmp_path / "harness" / "mock_data" / "ai_singer").glob("*")
+    )
 
 
 def test_replace_lrc_line_text_preserves_timestamps():
     updated = replace_lrc_line_text("[00:00.000]old\n[00:01.000]next\n", 0, "new words")
 
     assert updated == "[00:00.000]new words\n[00:01.000]next\n"
+
+
+def test_replace_lrc_line_text_skips_prompt_leakage():
+    updated = replace_lrc_line_text(
+        "[00:00.000]歌词只输出歌曲中实际唱出的内容。\n[00:30.000]real first line\n",
+        0,
+        "fixed first line",
+    )
+
+    assert "[00:00.000]歌词只输出歌曲中实际唱出的内容。" in updated
+    assert "[00:30.000]fixed first line" in updated
 
 
 def test_replace_srt_line_text_replaces_text_block():
@@ -263,6 +383,40 @@ def test_workbench_bridge_scans_and_loads_song_folder(tmp_path):
     assert "音频已加载" in bridge.status
 
 
+def test_workbench_bridge_throttles_rapid_song_switching(tmp_path, monkeypatch):
+    songs_root = tmp_path / "songs"
+    song_a = songs_root / "Song A"
+    song_b = songs_root / "Song B"
+    song_a.mkdir(parents=True)
+    song_b.mkdir()
+
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+    source_vocal = tmp_path / "harness" / "mock_data" / "vocal.wav"
+    source_inst = tmp_path / "harness" / "mock_data" / "instrumental.wav"
+    for folder in (song_a, song_b):
+        (folder / "vocal.wav").write_bytes(source_vocal.read_bytes())
+        (folder / "instrumental.wav").write_bytes(source_inst.read_bytes())
+        (folder / "lyrics.lrc").write_text("[00:00.000]line", encoding="utf-8")
+
+    bridge.setSongsRootFromUrl(songs_root.as_uri())
+    load_count = 0
+    original_load_playback = bridge.loadPlayback
+
+    def counted_load_playback():
+        nonlocal load_count
+        load_count += 1
+        original_load_playback()
+
+    monkeypatch.setattr(bridge, "loadPlayback", counted_load_playback)
+
+    bridge.loadSongAt(0)
+    bridge.loadSongAt(1)
+
+    assert load_count == 1
+    assert bridge.currentSongIndex == 0
+
+
 def test_workbench_bridge_preserves_english_sidecar_lyrics(tmp_path):
     songs_root = tmp_path / "songs"
     songs_root.mkdir()
@@ -319,23 +473,47 @@ def test_workbench_bridge_delete_current_song_loads_next(tmp_path):
     bridge.deleteSongAt(0)
 
     assert bridge.songNames == ["Song B"]
+    assert not song_a.exists()
+    assert song_b.exists()
     assert "Song B" in bridge.status or "音频已加载" in bridge.status
     assert bridge.vocalPath == str(song_b / "vocal.wav")
 
 
-def test_workbench_bridge_clear_song_list_keeps_files(tmp_path):
+def test_workbench_bridge_delete_current_song_clears_rewrite_state_when_no_next_song(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+    complete_song = tmp_path / "complete_song.wav"
+    complete_song.write_bytes((tmp_path / "harness" / "mock_data" / "vocal.wav").read_bytes())
+    bridge.importSongWithBackends(complete_song.as_uri(), "preview", "preview")
+    project_dir = tmp_path / "save" / "complete_song"
+    bridge.generateLyricRewrite(0, "删除前的改词")
+    assert bridge.lyricRewritePreviewPath
+
+    bridge.deleteSongAt(0)
+
+    assert bridge.songNames == []
+    assert not project_dir.exists()
+    assert bridge.lyricRewritePreviewPath == ""
+    assert bridge.lyricRewriteVersionLabels == []
+    assert bridge.lyricLines == []
+    assert bridge.currentSongIndex == -1
+
+
+def test_workbench_bridge_clear_song_list_deletes_files(tmp_path):
     songs_root = tmp_path / "music"
     songs_root.mkdir()
     audio = songs_root / "Song A.mp3"
     audio.write_bytes(b"fake")
+    audio.with_suffix(".lrc").write_text("[00:00.000]line", encoding="utf-8")
     bridge = WorkbenchBridge(tmp_path)
     bridge.setSongsRootFromUrl(songs_root.as_uri())
 
     bridge.clearSongList()
 
     assert bridge.songNames == []
-    assert audio.exists()
-    assert "不会删除磁盘文件" in bridge.status
+    assert not audio.exists()
+    assert not audio.with_suffix(".lrc").exists()
+    assert "删除 1 个磁盘项目" in bridge.status
 
 
 def test_workbench_bridge_loops_current_song_when_finished(tmp_path):
@@ -456,6 +634,29 @@ def test_workbench_bridge_imports_complete_song(tmp_path):
     assert bridge.songNames[0].startswith("complete_song")
     assert "导入成功" in bridge.status
     assert "分离=快速预览（不消人声）" in bridge.status
+
+
+def test_workbench_bridge_refreshes_song_list_after_import(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+    existing_dir = tmp_path / "save" / "existing_song"
+    existing_dir.mkdir(parents=True)
+    source_vocal = tmp_path / "harness" / "mock_data" / "vocal.wav"
+    source_inst = tmp_path / "harness" / "mock_data" / "instrumental.wav"
+    (existing_dir / "vocal.wav").write_bytes(source_vocal.read_bytes())
+    (existing_dir / "instrumental.wav").write_bytes(source_inst.read_bytes())
+    (existing_dir / "lyrics.lrc").write_text("[00:00.000]old lyric", encoding="utf-8")
+    bridge.scanSongs()
+    assert bridge.songNames == ["existing_song"]
+
+    new_song = tmp_path / "new_song.wav"
+    new_song.write_bytes(source_vocal.read_bytes())
+
+    bridge.importSongWithBackends(new_song.as_uri(), "preview", "preview")
+
+    assert bridge.songNames == ["existing_song", "new_song"]
+    assert bridge.currentSongIndex == 1
+    assert bridge.vocalPath == str(tmp_path / "save" / "new_song" / "stems" / "vocal.wav")
 
 
 def test_workbench_bridge_imports_with_selected_backends(tmp_path):
@@ -607,6 +808,20 @@ def test_workbench_bridge_generates_preview_lyrics_for_loaded_audio(tmp_path):
     assert bridge.lyricsPath.endswith("lyrics.lrc")
     assert bridge.lyricLines[0] == "未找到歌词文件"
     assert "歌词已生成" in bridge.status
+
+
+def test_workbench_bridge_generates_lyrics_under_save_for_root_audio(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+    root_song = tmp_path / "found.wav"
+    root_song.write_bytes((tmp_path / "harness" / "mock_data" / "vocal.wav").read_bytes())
+    bridge._current_source_path = root_song
+    bridge._lyrics_path = tmp_path / "found.lrc"
+
+    bridge.generateLyrics()
+
+    assert bridge.lyricsPath == str(tmp_path / "save" / "found" / "lyrics.lrc")
+    assert not (tmp_path / "found.lrc").exists()
 
 
 def test_workbench_bridge_generate_lyrics_warns_for_missing_song(tmp_path):

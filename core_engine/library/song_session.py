@@ -7,7 +7,8 @@ from core_engine.library.offsets import OffsetStore
 from core_engine.library.song_scanner import SongAsset, scan_song_library
 from core_engine.lyrics.parsers import parse_lyrics_by_suffix
 from core_engine.lyrics.playback_sync import LyricPlaybackSynchronizer
-from core_engine.lyrics.timeline import LyricTimeline
+from core_engine.lyrics.timeline import LyricLine, LyricTimeline
+from core_engine.transcription import is_instruction_hallucination
 
 
 @dataclass(frozen=True)
@@ -24,7 +25,14 @@ def load_lyrics_timeline(path: Path | None) -> LyricTimeline:
     if path is None or not path.exists():
         return LyricTimeline([])
     content = path.read_text(encoding="utf-8")
-    return parse_lyrics_by_suffix(path.suffix, content)
+    timeline = parse_lyrics_by_suffix(path.suffix, content)
+    return LyricTimeline(
+        [
+            LyricLine(line.start_ms, line.text, line.end_ms)
+            for line in timeline.lines
+            if not is_instruction_hallucination(line.text)
+        ]
+    )
 
 
 def load_song_session(asset: SongAsset, offset_store: OffsetStore | None = None) -> SongSession:
@@ -41,4 +49,3 @@ def select_song_by_name(songs_root: Path, song_name: str, offset_store: OffsetSt
         if asset.name == song_name:
             return load_song_session(asset, offset_store)
     raise ValueError(f"song not found: {song_name}")
-

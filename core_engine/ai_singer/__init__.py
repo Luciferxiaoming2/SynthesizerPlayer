@@ -3,6 +3,10 @@
 from core_engine.ai_singer.diff_singer_api import (
     DiffSingerClient,
     ExternalDiffSingerClient,
+    ExternalLyricContentEditor,
+    LocalSpeechSingingClient,
+    LyricContentEditor,
+    LyricContentEditRequest,
     PreviewSingingClient,
     SingingSegmentRequest,
 )
@@ -27,7 +31,11 @@ __all__ = [
     "BypassRvcInferencer",
     "DiffSingerClient",
     "ExternalDiffSingerClient",
+    "ExternalLyricContentEditor",
     "ExternalRvcInferencer",
+    "LocalSpeechSingingClient",
+    "LyricContentEditor",
+    "LyricContentEditRequest",
     "LyricRewriteSingingRequest",
     "LyricRewriteSingingResult",
     "LyricRewriteSingingWorkflow",

@@ -1,4 +1,4 @@
-import QtQuick
+﻿import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
@@ -31,6 +31,7 @@ ApplicationWindow {
     property real uiScale: Math.max(0.62, Math.min(1.35, Math.min(width / designWidth, height / designHeight)))
     property real tonePreviewValue: 0.4
     property int rewriteLyricIndex: -1
+    property var actionCooldowns: ({})
 
     function modelIndex(model, value) {
         if (!model)
@@ -54,6 +55,15 @@ ApplicationWindow {
         return root.bridge.lyricsBackends[lyricsBackendPicker.currentIndex]
     }
 
+    function acceptUiAction(key, cooldownMs) {
+        var now = Date.now()
+        var previous = actionCooldowns[key] || 0
+        if (now - previous < cooldownMs)
+            return false
+        actionCooldowns[key] = now
+        return true
+    }
+
     function htmlEscape(value) {
         return String(value)
             .replace(/&/g, "&amp;")
@@ -66,10 +76,10 @@ ApplicationWindow {
         if (!active)
             return htmlEscape(value)
         var text = String(value || "")
-        var tokens = text.match(/[\u3400-\u9fff]|[A-Za-z0-9]+|[^A-Za-z0-9\u3400-\u9fff]/g) || []
+        var tokens = text.match(/[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]|[A-Za-zÀ-ÖØ-öø-ÿ0-9\u0400-\u04ff\u0600-\u06ff]+|[^A-Za-zÀ-ÖØ-öø-ÿ0-9\u0400-\u04ff\u0600-\u06ff\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]/g) || []
         var countable = 0
         for (var i = 0; i < tokens.length; i++) {
-            if (/[\u3400-\u9fff]|[A-Za-z0-9]+/.test(tokens[i]))
+            if (/[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]|[A-Za-zÀ-ÖØ-öø-ÿ0-9\u0400-\u04ff\u0600-\u06ff]+/.test(tokens[i]))
                 countable += 1
         }
         var sungLimit = Math.floor(countable * Math.max(0, Math.min(1, progress || 0)))
@@ -77,7 +87,7 @@ ApplicationWindow {
         var html = ""
         for (var j = 0; j < tokens.length; j++) {
             var token = tokens[j]
-            var isCountable = /[\u3400-\u9fff]|[A-Za-z0-9]+/.test(token)
+            var isCountable = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]|[A-Za-zÀ-ÖØ-öø-ÿ0-9\u0400-\u04ff\u0600-\u06ff]+/.test(token)
             var isPast = isCountable && seen < sungLimit
             if (isCountable)
                 seen += 1
@@ -105,7 +115,10 @@ ApplicationWindow {
         id: songImportDialog
         title: "导入完整歌曲"
         nameFilters: ["音频文件 (*.wav *.mp3 *.flac *.ogg *.m4a *.aac)", "所有文件 (*)"]
-        onAccepted: if (root.bridge) root.bridge.importSongWithBackendsAsync(selectedFile.toString(), root.selectedSeparatorBackend(), root.selectedLyricsBackend())
+        onAccepted: {
+            if (root.bridge && root.acceptUiAction("importSong", 1000))
+                root.bridge.importSongWithBackendsAsync(selectedFile.toString(), root.selectedSeparatorBackend(), root.selectedLyricsBackend())
+        }
     }
 
     FileDialog {
@@ -190,6 +203,55 @@ ApplicationWindow {
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
+            ColumnLayout {
+                visible: false
+                Layout.fillWidth: true
+                spacing: 8
+                Text {
+                    text: "已生成的试听版本"
+                    color: root.textMuted
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+                ListView {
+                    id: rewriteVersionListUnused
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.min(96, Math.max(42, contentHeight))
+                    clip: true
+                    spacing: 6
+                    model: root.bridge ? root.bridge.lyricRewriteVersionLabels : []
+                    delegate: Rectangle {
+                        width: rewriteVersionListUnused.width
+                        height: 34
+                        radius: 7
+                        color: "#151722"
+                        border.color: "#303447"
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 10
+                            spacing: 8
+                            Text {
+                                text: modelData
+                                color: root.textMain
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            Text {
+                                text: "套用"
+                                color: root.accent2
+                                font.pixelSize: 12
+                                font.bold: true
+                            }
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: if (root.bridge) root.bridge.applyLyricRewriteVersion(index)
+                        }
+                    }
+                }
+            }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
@@ -205,6 +267,72 @@ ApplicationWindow {
                         lyricsConfirmPopup.close()
                         if (root.bridge)
                             root.bridge.generateSmartLyrics()
+                    }
+                }
+            }
+        }
+    }
+
+    Popup {
+        id: deleteConfirmPopup
+        anchors.centerIn: parent
+        width: Math.min(parent.width * 0.58, 560)
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        padding: 0
+        property string titleText: "确认删除"
+        property string message: ""
+        property string action: ""
+        property int songIndex: -1
+
+        background: Rectangle {
+            radius: 10
+            color: "#10121b"
+            border.color: "#ff4fa3"
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 22
+            spacing: 16
+
+            Text {
+                text: deleteConfirmPopup.titleText
+                color: root.accent2
+                font.pixelSize: 20
+                font.bold: true
+                Layout.fillWidth: true
+            }
+            Text {
+                text: deleteConfirmPopup.message
+                color: root.textMuted
+                font.pixelSize: 14
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                SecondaryButton {
+                    text: "取消"
+                    Layout.preferredWidth: 110
+                    onClicked: deleteConfirmPopup.close()
+                }
+                PrimaryButton {
+                    text: "确认删除"
+                    Layout.preferredWidth: 130
+                    onClicked: {
+                        deleteConfirmPopup.close()
+                        root.rewriteLyricIndex = -1
+                        rightPaneRewriteText.text = ""
+                        rightRewriteText.text = ""
+                        if (!root.bridge)
+                            return
+                        if (deleteConfirmPopup.action === "delete")
+                            root.bridge.deleteSongAt(deleteConfirmPopup.songIndex)
+                        else if (deleteConfirmPopup.action === "clear")
+                            root.bridge.clearSongList()
                     }
                 }
             }
@@ -289,11 +417,60 @@ ApplicationWindow {
                 }
             }
             Text {
-                text: "当前先使用轻量 preview 合成验证流程；真实唱腔模型接入后会替换这里的合成后端。"
+                text: "当前使用本机轻量改词唱生成试听音频，无需显卡；真实唱声大模型后续可作为增强后端接入。"
                 color: root.textDim
                 font.pixelSize: 12
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
+            }
+            ColumnLayout {
+                visible: root.bridge && root.bridge.lyricRewriteVersionLabels.length > 0
+                Layout.fillWidth: true
+                spacing: 8
+                Text {
+                    text: "已生成的试听版本"
+                    color: root.textMuted
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+                ListView {
+                    id: rewriteVersionList
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.min(96, Math.max(42, contentHeight))
+                    clip: true
+                    spacing: 6
+                    model: root.bridge ? root.bridge.lyricRewriteVersionLabels : []
+                    delegate: Rectangle {
+                        width: rewriteVersionList.width
+                        height: 34
+                        radius: 7
+                        color: "#151722"
+                        border.color: "#303447"
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 10
+                            spacing: 8
+                            Text {
+                                text: modelData
+                                color: root.textMain
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            Text {
+                                text: "套用"
+                                color: root.accent2
+                                font.pixelSize: 12
+                                font.bold: true
+                            }
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: if (root.bridge) root.bridge.applyLyricRewriteVersion(index)
+                        }
+                    }
+                }
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -301,6 +478,11 @@ ApplicationWindow {
                     text: "恢复原唱"
                     Layout.preferredWidth: 110
                     onClicked: if (root.bridge) root.bridge.reloadOriginalVocal()
+                }
+                SecondaryButton {
+                    text: "版本文件夹"
+                    Layout.preferredWidth: 108
+                    onClicked: if (root.bridge) root.bridge.openLyricRewriteFolder()
                 }
                 Item { Layout.fillWidth: true }
                 SecondaryButton {
@@ -360,6 +542,23 @@ ApplicationWindow {
         function onSongsChanged() {
             if (root.bridge && root.bridge.currentSongIndex >= 0)
                 songList.currentIndex = root.bridge.currentSongIndex
+            if (!root.bridge || root.bridge.currentSongIndex < 0 || root.bridge.songNames.length === 0) {
+                root.rewriteLyricIndex = -1
+                rightPaneRewriteText.text = ""
+                rightRewriteText.text = ""
+            }
+        }
+        function onPlaybackChanged() {
+            if (!root.bridge)
+                return
+            if (!vocalGain.pressed)
+                vocalGain.value = root.bridge.vocalGain
+            if (!instGain.pressed)
+                instGain.value = root.bridge.instrumentalGain
+        }
+        function onLyricRewriteChanged() {
+            if (root.bridge && !root.bridge.lyricRewriteBusy && root.bridge.lyricRewriteProgress >= 100)
+                root.rewriteLyricIndex = -1
         }
     }
 
@@ -413,62 +612,11 @@ ApplicationWindow {
                     width: parent.width
                     spacing: 12
 
-                    SettingsLabel { text: "导入与歌曲库" }
-                PrimaryButton {
-                    text: root.bridge && root.bridge.importBusy ? "导入中" : "智能分轨导入歌曲"
-                    enabled: !(root.bridge && root.bridge.importBusy)
-                    Layout.fillWidth: true
-                    onClicked: songImportDialog.open()
-                }
-                ColumnLayout {
-                    visible: root.bridge && root.bridge.importBusy
-                    Layout.fillWidth: true
-                    spacing: 6
-                    Text {
-                        text: root.bridge ? root.bridge.importProgressStatus : "正在导入歌曲"
-                        color: root.textMuted
-                        font.pixelSize: 12
-                        elide: Text.ElideRight
-                        Layout.fillWidth: true
-                    }
-                    ProgressBar {
-                        from: 0
-                        to: 100
-                        value: root.bridge ? root.bridge.importProgress : 0
-                        indeterminate: root.bridge && root.bridge.importProgressIndeterminate
-                        Layout.fillWidth: true
-                    }
-                }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        SecondaryButton {
-                            text: "选择目录"
-                            Layout.fillWidth: true
-                            onClicked: songsFolderDialog.open()
-                        }
-                        SecondaryButton {
-                            text: "扫描本地"
-                            Layout.fillWidth: true
-                            onClicked: if (root.bridge) root.bridge.scanSongs()
-                        }
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        SecondaryButton {
-                            text: "加载选中"
-                            Layout.fillWidth: true
-                            onClicked: if (root.bridge) root.bridge.loadSongAt(songList.currentIndex)
-                        }
-                        SecondaryButton {
-                            text: "删除选中"
-                            Layout.fillWidth: true
-                            onClicked: if (root.bridge) root.bridge.deleteSongAt(songList.currentIndex)
-                        }
-                    }
+                    SettingsLabel { text: "歌曲库位置" }
                     SecondaryButton {
-                        text: "清空列表"
+                        text: "选择歌曲库目录"
                         Layout.fillWidth: true
-                        onClicked: if (root.bridge) root.bridge.clearSongList()
+                        onClicked: songsFolderDialog.open()
                     }
 
                     SettingsLabel { text: "歌词与分离" }
@@ -594,9 +742,8 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         onClicked: {
                             root.rewriteLyricIndex = root.bridge ? root.bridge.currentLyricIndex : -1
-                            rewritePopup.originalLyric = root.bridge && root.bridge.currentLyric.length > 0 ? root.bridge.currentLyric : ""
-                            rewriteText.text = rewritePopup.originalLyric
-                            rewritePopup.open()
+                            if (root.rewriteLyricIndex >= 0)
+                                rightPaneRewriteText.text = root.bridge && root.bridge.currentLyric.length > 0 ? root.bridge.currentLyric : ""
                         }
                     }
                 }
@@ -676,6 +823,241 @@ ApplicationWindow {
                     onClicked: settingsPopup.open()
                 }
             }
+
+            ColumnLayout {
+                visible: false
+                anchors.fill: parent
+                anchors.margins: 18
+                spacing: 14
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: "⚡ AI 智能改唱工作舱"
+                        color: root.accent2
+                        font.pixelSize: 18
+                        font.bold: true
+                        Layout.fillWidth: true
+                    }
+                    SecondaryButton {
+                        text: "返回"
+                        Layout.preferredWidth: 72
+                        Layout.preferredHeight: 34
+                        onClicked: root.rewriteLyricIndex = -1
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: "#2a1b2a"
+                }
+
+                Text {
+                    text: root.rewriteLyricIndex >= 0 ? ("选中时间戳  " + (root.bridge && root.bridge.lyricTimeLabels.length > root.rewriteLyricIndex ? root.bridge.lyricTimeLabels[root.rewriteLyricIndex] : "--:--")) : "未选择"
+                    color: root.textMuted
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+
+                Text {
+                    text: "原始歌词"
+                    color: root.textMuted
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 58
+                    radius: 8
+                    color: "#121520"
+                    border.color: "#3b4054"
+                    Text {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        text: root.rewriteLyricIndex >= 0 && root.bridge && root.bridge.lyricLines.length > root.rewriteLyricIndex ? ("“" + root.bridge.lyricLines[root.rewriteLyricIndex] + "”") : "请在中间歌词区选择一句"
+                        color: root.textMain
+                        font.pixelSize: 14
+                        font.bold: true
+                        wrapMode: Text.WordWrap
+                        elide: Text.ElideRight
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: "输入新歌词"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        Layout.fillWidth: true
+                    }
+                    Text {
+                        text: "改词提示"
+                        color: root.accent2
+                        font.pixelSize: 12
+                        font.bold: true
+                    }
+                }
+
+                TextArea {
+                    id: rightRewriteText
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 82
+                    placeholderText: "输入要改唱的新歌词"
+                    text: root.rewriteLyricIndex >= 0 && root.bridge && root.bridge.lyricLines.length > root.rewriteLyricIndex ? root.bridge.lyricLines[root.rewriteLyricIndex] : ""
+                    wrapMode: TextArea.Wrap
+                    selectByMouse: true
+                    color: root.textMain
+                    font.pixelSize: 15
+                    font.bold: true
+                    background: Rectangle {
+                        radius: 10
+                        color: "#12131d"
+                        border.color: root.accent
+                    }
+                }
+
+                Text {
+                    text: "改词唱模式"
+                    color: root.textMuted
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+
+                ComboBox {
+                    Layout.fillWidth: true
+                    model: ["本机轻量改词唱（无需显卡）"]
+                    currentIndex: 0
+                    enabled: false
+                }
+
+                Text {
+                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。当前会生成本机试听音频并替换选中句子；效果是轻量预览，不是云端大模型真唱。" : "改词唱后端：本机轻量改词唱（无需显卡）"
+                    color: root.textDim
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                Rectangle {
+                    visible: root.bridge && root.bridge.lyricRewriteBusy
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible ? 72 : 0
+                    radius: 10
+                    color: "#17121d"
+                    border.color: "#5d2450"
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        Text {
+                            text: root.bridge ? root.bridge.lyricRewriteStatus : "正在生成改词唱"
+                            color: root.textMain
+                            font.pixelSize: 13
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                        ProgressBar {
+                            from: 0
+                            to: 100
+                            value: root.bridge ? root.bridge.lyricRewriteProgress : 0
+                            indeterminate: root.bridge && root.bridge.lyricRewriteBusy && root.bridge.lyricRewriteProgress < 90
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+
+                PrimaryButton {
+                    text: root.bridge && root.bridge.lyricRewriteBusy ? "正在智能改唱" : "启动智能改唱并修补"
+                    enabled: root.rewriteLyricIndex >= 0 && !(root.bridge && root.bridge.lyricRewriteBusy)
+                    Layout.fillWidth: true
+                    onClicked: if (root.bridge) root.bridge.generateLyricRewrite(root.rewriteLyricIndex, rightRewriteText.text)
+                }
+
+                SecondaryButton {
+                    text: "取消修改"
+                    Layout.fillWidth: true
+                    onClicked: root.rewriteLyricIndex = -1
+                }
+
+                ColumnLayout {
+                    visible: root.bridge && root.bridge.lyricRewriteVersionLabels.length > 0
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Text {
+                        text: "已生成试听版本"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        SecondaryButton {
+                            text: "清空试听"
+                            enabled: root.bridge && root.bridge.lyricRewriteVersionLabels.length > 0
+                            Layout.fillWidth: true
+                            onClicked: if (root.bridge) root.bridge.clearLyricRewriteVersions()
+                        }
+                    }
+                    ListView {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 96
+                        clip: true
+                        model: root.bridge ? root.bridge.lyricRewriteVersionLabels : []
+                        delegate: Rectangle {
+                            width: ListView.view.width
+                            height: 34
+                            radius: 6
+                            color: "#151722"
+                            border.color: "#303447"
+                            Text {
+                                anchors.left: parent.left
+                                anchors.right: deleteRewriteVersionButton.left
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+                                anchors.leftMargin: 10
+                                anchors.rightMargin: 8
+                                verticalAlignment: Text.AlignVCenter
+                                text: modelData
+                                color: root.textMain
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                            }
+                            Rectangle {
+                                id: deleteRewriteVersionButton
+                                width: 42
+                                height: 24
+                                anchors.right: parent.right
+                                anchors.rightMargin: 6
+                                anchors.verticalCenter: parent.verticalCenter
+                                radius: 6
+                                color: "#20151d"
+                                border.color: "#4a2c42"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "删"
+                                    color: root.accent2
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: if (root.bridge) root.bridge.deleteLyricRewriteVersion(index)
+                                }
+                            }
+                            MouseArea {
+                                anchors.left: parent.left
+                                anchors.right: deleteRewriteVersionButton.left
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+                                onClicked: if (root.bridge) root.bridge.applyLyricRewriteVersion(index)
+                            }
+                        }
+                    }
+                }
+
+                Item { Layout.fillHeight: true }
+            }
         }
 
         Rectangle {
@@ -751,7 +1133,7 @@ ApplicationWindow {
                                 color: ListView.isCurrentItem ? "#5b1741" : "#181c28"
                                 Text {
                                     anchors.centerIn: parent
-                                    text: "♫"
+                                    text: "♪"
                                     color: ListView.isCurrentItem ? root.accent2 : root.textDim
                                     font.pixelSize: 21
                                 }
@@ -776,7 +1158,7 @@ ApplicationWindow {
                                 }
                             }
                             Text {
-                                text: index === songList.currentIndex ? (root.bridge ? root.bridge.playbackTime.split(" / ")[1] : "00:00") : "--:--"
+                                text: root.bridge && root.bridge.songDurationLabels.length > index ? root.bridge.songDurationLabels[index] : "--:--"
                                 color: root.textMuted
                                 font.pixelSize: 12
                                 font.family: "Consolas"
@@ -786,7 +1168,10 @@ ApplicationWindow {
                         MouseArea {
                             anchors.fill: parent
                             onClicked: songList.currentIndex = index
-                            onDoubleClicked: if (root.bridge) root.bridge.loadSongAt(index)
+                            onDoubleClicked: {
+                                if (root.bridge && root.acceptUiAction("loadSong", 520))
+                                    root.bridge.loadSongAt(index)
+                            }
                         }
                     }
                 }
@@ -807,8 +1192,11 @@ ApplicationWindow {
                         text: root.bridge ? root.bridge.importProgressStatus : "正在导入歌曲"
                         color: root.textMuted
                         font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                        maximumLineCount: 2
                         elide: Text.ElideRight
                         Layout.fillWidth: true
+                        Layout.preferredHeight: 34
                     }
                     ProgressBar {
                         from: 0
@@ -822,7 +1210,7 @@ ApplicationWindow {
                 RowLayout {
                     Layout.fillWidth: true
                     SecondaryButton {
-                        text: "⇧ 导入伴奏"
+                        text: "♫ 导入伴奏"
                         Layout.fillWidth: true
                         onClicked: {
                             root.fileTarget = "instrumental"
@@ -831,9 +1219,24 @@ ApplicationWindow {
                         }
                     }
                     SecondaryButton {
-                        text: "⌕ 扫描 save"
+                        text: "↻ 扫描 save"
                         Layout.fillWidth: true
-                        onClicked: if (root.bridge) root.bridge.scanSongs()
+                        onClicked: if (root.bridge && root.acceptUiAction("scanSongs", 700)) root.bridge.scanSongs()
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    SecondaryButton {
+                        text: "打开文件夹"
+                        Layout.fillWidth: true
+                        onClicked: if (root.bridge) root.bridge.openSongsRootFolder()
+                    }
+                    SecondaryButton {
+                        text: "当前歌曲目录"
+                        enabled: root.bridge && root.bridge.songNames.length > 0
+                        Layout.fillWidth: true
+                        onClicked: if (root.bridge) root.bridge.openCurrentSongFolder()
                     }
                 }
 
@@ -843,13 +1246,26 @@ ApplicationWindow {
                         text: "删除选中"
                         enabled: root.bridge && root.bridge.songNames.length > 0
                         Layout.fillWidth: true
-                        onClicked: if (root.bridge) root.bridge.deleteSongAt(songList.currentIndex)
+                        onClicked: if (root.bridge && root.acceptUiAction("deleteSong", 500)) {
+                            var name = root.bridge.songNames.length > songList.currentIndex ? root.bridge.songNames[songList.currentIndex] : "选中歌曲"
+                            deleteConfirmPopup.titleText = "确认删除选中歌曲"
+                            deleteConfirmPopup.message = "将从 save 歌曲库中删除“" + name + "”及其工程文件、歌词和 AI 改唱试听内容。此操作不可撤销。"
+                            deleteConfirmPopup.action = "delete"
+                            deleteConfirmPopup.songIndex = songList.currentIndex
+                            deleteConfirmPopup.open()
+                        }
                     }
                     SecondaryButton {
                         text: "清空列表"
                         enabled: root.bridge && root.bridge.songNames.length > 0
                         Layout.fillWidth: true
-                        onClicked: if (root.bridge) root.bridge.clearSongList()
+                        onClicked: if (root.bridge && root.acceptUiAction("clearSongList", 900)) {
+                            deleteConfirmPopup.titleText = "确认清空歌曲库"
+                            deleteConfirmPopup.message = "将从 save 歌曲库中删除当前列表里的 " + root.bridge.songNames.length + " 首歌曲及其工程文件、歌词和 AI 改唱试听内容。此操作不可撤销。"
+                            deleteConfirmPopup.action = "clear"
+                            deleteConfirmPopup.songIndex = -1
+                            deleteConfirmPopup.open()
+                        }
                     }
                 }
             }
@@ -865,6 +1281,220 @@ ApplicationWindow {
             border.color: "#1e212c"
 
             ColumnLayout {
+                visible: root.rewriteLyricIndex >= 0
+                anchors.fill: parent
+                anchors.margins: 18
+                spacing: 14
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: "AI 智能改唱工作舱"
+                        color: root.accent2
+                        font.pixelSize: 18
+                        font.bold: true
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                    }
+                    SecondaryButton {
+                        text: "返回"
+                        Layout.preferredWidth: 72
+                        Layout.preferredHeight: 34
+                        onClicked: root.rewriteLyricIndex = -1
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: "#2a1b2a"
+                }
+
+                Text {
+                    text: root.rewriteLyricIndex >= 0 ? ("选中时间戳  " + (root.bridge && root.bridge.lyricTimeLabels.length > root.rewriteLyricIndex ? root.bridge.lyricTimeLabels[root.rewriteLyricIndex] : "--:--")) : "未选择"
+                    color: root.textMuted
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+
+                Text {
+                    text: "原始歌词"
+                    color: root.textMuted
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 58
+                    radius: 8
+                    color: "#121520"
+                    border.color: "#3b4054"
+                    Text {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        text: root.rewriteLyricIndex >= 0 && root.bridge && root.bridge.lyricLines.length > root.rewriteLyricIndex ? ("\"" + root.bridge.lyricLines[root.rewriteLyricIndex] + "\"") : "请在中间歌词区选择一句"
+                        color: root.textMain
+                        font.pixelSize: 14
+                        font.bold: true
+                        wrapMode: Text.WordWrap
+                        elide: Text.ElideRight
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: "输入新歌词"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        Layout.fillWidth: true
+                    }
+                    Text {
+                        text: "改词提示"
+                        color: root.accent2
+                        font.pixelSize: 12
+                        font.bold: true
+                    }
+                }
+
+                TextArea {
+                    id: rightPaneRewriteText
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 82
+                    placeholderText: "输入要改唱的新歌词"
+                    text: root.rewriteLyricIndex >= 0 && root.bridge && root.bridge.lyricLines.length > root.rewriteLyricIndex ? root.bridge.lyricLines[root.rewriteLyricIndex] : ""
+                    wrapMode: TextArea.Wrap
+                    selectByMouse: true
+                    color: root.textMain
+                    font.pixelSize: 15
+                    font.bold: true
+                    background: Rectangle {
+                        radius: 10
+                        color: "#12131d"
+                        border.color: root.accent
+                    }
+                }
+
+                Text {
+                    text: "改词唱模式"
+                    color: root.textMuted
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+
+                ComboBox {
+                    Layout.fillWidth: true
+                    model: ["本机轻量改词唱（无需显卡）"]
+                    currentIndex: 0
+                    enabled: false
+                }
+
+                Text {
+                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。当前会生成本机试听音频并替换选中句子；效果是轻量预览，不是云端大模型真唱。" : "改词唱后端：本机轻量改词唱（无需显卡）"
+                    color: root.textDim
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                Rectangle {
+                    visible: root.bridge && root.bridge.lyricRewriteBusy
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible ? 72 : 0
+                    radius: 10
+                    color: "#17121d"
+                    border.color: "#5d2450"
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        Text {
+                            text: root.bridge ? root.bridge.lyricRewriteStatus : "正在生成改词唱"
+                            color: root.textMain
+                            font.pixelSize: 13
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                        ProgressBar {
+                            from: 0
+                            to: 100
+                            value: root.bridge ? root.bridge.lyricRewriteProgress : 0
+                            indeterminate: root.bridge && root.bridge.lyricRewriteBusy && root.bridge.lyricRewriteProgress < 90
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+
+                PrimaryButton {
+                    text: root.bridge && root.bridge.lyricRewriteBusy ? "正在智能改唱" : "启动智能改唱并修补"
+                    enabled: root.rewriteLyricIndex >= 0 && !(root.bridge && root.bridge.lyricRewriteBusy)
+                    Layout.fillWidth: true
+                    onClicked: if (root.bridge) root.bridge.generateLyricRewrite(root.rewriteLyricIndex, rightPaneRewriteText.text)
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    SecondaryButton {
+                        text: "取消修改"
+                        Layout.fillWidth: true
+                        onClicked: root.rewriteLyricIndex = -1
+                    }
+                    SecondaryButton {
+                        text: "重置原词"
+                        enabled: !(root.bridge && root.bridge.lyricRewriteBusy)
+                        Layout.fillWidth: true
+                        onClicked: {
+                            root.rewriteLyricIndex = -1
+                            if (root.bridge)
+                                root.bridge.reloadOriginalVocal()
+                        }
+                    }
+                }
+
+                ColumnLayout {
+                    visible: root.bridge && root.bridge.lyricRewriteVersionLabels.length > 0
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Text {
+                        text: "已生成试听版本"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                    }
+                    ListView {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 96
+                        clip: true
+                        model: root.bridge ? root.bridge.lyricRewriteVersionLabels : []
+                        delegate: Rectangle {
+                            width: ListView.view.width
+                            height: 32
+                            radius: 6
+                            color: "#151722"
+                            border.color: "#303447"
+                            Text {
+                                anchors.fill: parent
+                                anchors.leftMargin: 10
+                                anchors.rightMargin: 10
+                                verticalAlignment: Text.AlignVCenter
+                                text: modelData
+                                color: root.textMain
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: if (root.bridge) root.bridge.applyLyricRewriteVersion(index)
+                            }
+                        }
+                    }
+                }
+
+                Item { Layout.fillHeight: true }
+            }
+
+            ColumnLayout {
+                visible: root.rewriteLyricIndex < 0
                 anchors.fill: parent
                 anchors.margins: 18
                 spacing: 16
@@ -887,7 +1517,7 @@ ApplicationWindow {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 194
+                    Layout.preferredHeight: root.bridge && root.bridge.toneDeafBusy ? 220 : 194
                     radius: 14
                     color: "#10131d"
                     border.color: "#252a39"
@@ -898,33 +1528,41 @@ ApplicationWindow {
                         RowLayout {
                             Layout.fillWidth: true
                             Text {
-                                text: "基频实时破坏状态"
+                                text: "基频实时波动状态"
                                 color: root.textDim
                                 font.pixelSize: 12
                                 Layout.fillWidth: true
+                                elide: Text.ElideRight
                             }
                             Text {
                                 text: root.bridge ? (Math.round(root.bridge.toneDeafRatio * 100) + "% 跑调") : "0% 跑调"
                                 color: root.accent2
                                 font.pixelSize: 12
                                 font.bold: true
+                                Layout.preferredWidth: 74
+                                Layout.maximumWidth: 74
+                                horizontalAlignment: Text.AlignRight
+                                elide: Text.ElideRight
                             }
                         }
-                        RowLayout {
+                        Item {
+                            id: f0Bars
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            spacing: 8
+                            property int barCount: root.bridge ? root.bridge.f0MonitorLevels.length : 0
+                            property real barWidth: 3.5
                             Repeater {
                                 model: root.bridge ? root.bridge.f0MonitorLevels : []
                                 Rectangle {
-                                    Layout.preferredWidth: 8
-                                    Layout.preferredHeight: 12 + modelData * 54 + (root.bridge ? root.bridge.toneDeafRatio * 6 : 0)
-                                    radius: 4
+                                    width: f0Bars.barWidth
+                                    height: 12 + modelData * 54 + (root.bridge ? root.bridge.toneDeafRatio * 6 : 0)
+                                    x: f0Bars.barCount <= 1 ? 0 : index * (f0Bars.width - width) / (f0Bars.barCount - 1)
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    radius: 1.75
                                     color: index % 5 === 0 ? "#ff7fc0" : "#f269ad"
                                     opacity: 0.76 + Math.min(0.22, modelData * 0.22)
-                                    Layout.alignment: Qt.AlignVCenter
 
-                                    Behavior on Layout.preferredHeight {
+                                    Behavior on height {
                                         NumberAnimation { duration: 90; easing.type: Easing.OutCubic }
                                     }
                                 }
@@ -936,6 +1574,26 @@ ApplicationWindow {
                             font.pixelSize: 13
                             horizontalAlignment: Text.AlignHCenter
                             Layout.fillWidth: true
+                        }
+                        RowLayout {
+                            visible: root.bridge && root.bridge.toneDeafBusy
+                            Layout.fillWidth: true
+                            spacing: 8
+                            ProgressBar {
+                                from: 0
+                                to: 100
+                                value: root.bridge ? root.bridge.toneDeafProgress : 0
+                                indeterminate: root.bridge && root.bridge.toneDeafProgressIndeterminate
+                                Layout.fillWidth: true
+                            }
+                            Text {
+                                text: root.bridge ? (root.bridge.toneDeafProgress + "%") : "0%"
+                                color: root.accent2
+                                font.pixelSize: 12
+                                font.bold: true
+                                Layout.preferredWidth: 42
+                                horizontalAlignment: Text.AlignRight
+                            }
                         }
                     }
                 }
@@ -1060,7 +1718,7 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         Text {
-                            text: "对齐检测:"
+                            text: "对齐检测"
                             color: root.textMuted
                             font.pixelSize: 13
                             Layout.fillWidth: true
@@ -1074,7 +1732,7 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         Text {
-                            text: "VST 状态:"
+                            text: "VST 宿主"
                             color: root.textMuted
                             font.pixelSize: 13
                             Layout.fillWidth: true
@@ -1126,7 +1784,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 50
                     Text {
-                        text: "♬"
+                        text: "♪"
                         color: root.accent2
                         font.pixelSize: 27
                     }
@@ -1233,38 +1891,59 @@ ApplicationWindow {
                         delegate: Rectangle {
                             property bool active: ListView.isCurrentItem
                             property bool sung: root.bridge && root.bridge.currentLyricIndex >= 0 && index < root.bridge.currentLyricIndex
+                            property bool rewriteSelected: root.rewriteLyricIndex === index
 
-                            width: active ? Math.max(260, lyricList.width - 8) : (sung ? Math.min(430, lyricList.width * 0.54) : Math.min(520, Math.max(220, lyricText.implicitWidth + 72)))
-                            height: active ? 62 : (sung ? 44 : 58)
-                            x: (lyricList.width - width) / 2
-                            radius: active ? 16 : 12
-                            color: active ? "#2a0a1d" : "transparent"
-                            border.color: active ? "#6a2149" : "transparent"
+                            width: active ? Math.max(260, lyricList.width - 8) : Math.min(lyricList.width - 80, Math.max(260, lyricText.implicitWidth + 72))
+                            height: active || rewriteSelected ? 70 : (sung ? 44 : 58)
+                            x: active || rewriteSelected ? (lyricList.width - width) / 2 : 40
+                            radius: active || rewriteSelected ? 16 : 12
+                            color: rewriteSelected ? "#2d0b20" : (active ? "#2a0a1d" : "transparent")
+                            border.color: rewriteSelected ? root.accent2 : (active ? "#6a2149" : "transparent")
+                            border.width: rewriteSelected ? 2 : 1
                             opacity: sung && !active ? 0.68 : 1.0
+                            SequentialAnimation on border.color {
+                                running: rewriteSelected
+                                loops: Animation.Infinite
+                                ColorAnimation { to: "#ff8bcf"; duration: 700 }
+                                ColorAnimation { to: root.accent2; duration: 700 }
+                            }
 
-                            RowLayout {
+                            Item {
                                 anchors.fill: parent
                                 anchors.leftMargin: active ? 20 : 4
                                 anchors.rightMargin: active ? 18 : 4
-                                spacing: active ? 12 : 8
 
-                                Text {
-                                    id: lyricText
-                                    text: root.lyricProgressHtml(modelData, root.bridge ? root.bridge.currentLyricProgress : 0, active, sung)
-                                    textFormat: active ? Text.RichText : Text.PlainText
-                                    color: active ? root.accent2 : (sung ? "#948696" : root.textMain)
-                                    font.pixelSize: active ? 25 : (sung ? 15 : 20)
-                                    font.bold: active || sung
-                                    elide: Text.ElideRight
-                                    Layout.fillWidth: true
-                                    verticalAlignment: Text.AlignVCenter
+                                Item {
+                                    id: lyricTextViewport
+                                    anchors.left: parent.left
+                                    anchors.right: active ? lyricTimeBadge.left : parent.right
+                                    anchors.rightMargin: active ? 12 : 0
+                                    anchors.top: parent.top
+                                    anchors.bottom: parent.bottom
+                                    clip: true
+
+                                    Text {
+                                        id: lyricText
+                                        width: Math.max(parent.width, implicitWidth)
+                                        x: active && implicitWidth > parent.width ? parent.width - implicitWidth : 0
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: root.lyricProgressHtml(modelData, root.bridge ? root.bridge.currentLyricProgress : 0, active, sung)
+                                        textFormat: active ? Text.RichText : Text.PlainText
+                                        color: active ? root.accent2 : (sung ? "#948696" : root.textMain)
+                                        font.pixelSize: active ? 25 : (sung ? 15 : 20)
+                                        font.bold: active || sung
+                                        elide: active ? Text.ElideNone : Text.ElideRight
+                                        horizontalAlignment: Text.AlignLeft
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
                                 }
 
                                 Rectangle {
                                     id: lyricTimeBadge
-                                    Layout.preferredWidth: 76
-                                    Layout.preferredHeight: 28
-                                    Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+                                    width: 76
+                                    height: 28
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
                                     radius: 15
                                     color: "#171a24"
                                     border.color: active ? "#3d325f" : "#262a38"
@@ -1283,13 +1962,15 @@ ApplicationWindow {
                             MouseArea {
                                 anchors.fill: parent
                                 acceptedButtons: Qt.LeftButton
-                                onClicked: lyricList.currentIndex = index
+                                onClicked: {
+                                    lyricList.currentIndex = index
+                                    root.rewriteLyricIndex = index
+                                    rightPaneRewriteText.text = modelData
+                                }
                                 onDoubleClicked: {
                                     lyricList.currentIndex = index
                                     root.rewriteLyricIndex = index
-                                    rewritePopup.originalLyric = modelData
-                                    rewriteText.text = modelData
-                                    rewritePopup.open()
+                                    rightPaneRewriteText.text = modelData
                                 }
                             }
                         }
@@ -1403,6 +2084,8 @@ ApplicationWindow {
                         value: root.bridge ? root.bridge.playbackProgress : 0.0
                         Layout.fillWidth: true
                         onMoved: if (root.bridge) root.bridge.seekProgress(value)
+                        background: SliderTrack { control: progressSlider }
+                        handle: SliderHandle { control: progressSlider }
                     }
                     Text {
                         text: root.bridge ? root.bridge.playbackTime.split(" / ")[1] : "00:00"
@@ -1419,7 +2102,7 @@ ApplicationWindow {
                     IconButton {
                         label: "■"
                         tip: "停止"
-                        onClicked: if (root.bridge) root.bridge.stop()
+                        onClicked: if (root.bridge && root.acceptUiAction("playback", 180)) root.bridge.stop()
                     }
 
                     Rectangle {
@@ -1427,23 +2110,50 @@ ApplicationWindow {
                         Layout.preferredHeight: 60
                         radius: 16
                         color: root.accent
+                        Item {
+                            width: 24
+                            height: 24
+                            anchors.centerIn: parent
+                            visible: root.bridge && root.bridge.isPlaying
+                            Rectangle {
+                                width: 6
+                                height: 22
+                                radius: 1
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: "white"
+                            }
+                            Rectangle {
+                                width: 6
+                                height: 22
+                                radius: 1
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: "white"
+                            }
+                        }
                         Text {
                             anchors.centerIn: parent
-                            text: root.bridge && root.bridge.isPlaying ? "Ⅱ" : "▶"
+                            visible: !(root.bridge && root.bridge.isPlaying)
+                            text: "▶"
                             color: "white"
-                            font.pixelSize: 24
+                            font.pixelSize: 34
                             font.bold: true
                         }
                         MouseArea {
                             anchors.fill: parent
-                            onClicked: if (root.bridge) root.bridge.isPlaying ? root.bridge.pause() : root.bridge.startAudioOutput()
+                            enabled: !(root.bridge && (root.bridge.importBusy || root.bridge.toneDeafBusy))
+                            onClicked: {
+                                if (root.bridge && root.acceptUiAction("playback", 180))
+                                    root.bridge.isPlaying ? root.bridge.pause() : root.bridge.startAudioOutput()
+                            }
                         }
                     }
 
                     IconButton {
-                        label: root.bridge && root.bridge.playModeLabel === "单曲循环" ? "↻" : "⇥"
+                        label: root.bridge && root.bridge.playModeLabel === "单曲循环" ? "↻" : "♫"
                         tip: root.bridge ? root.bridge.playModeLabel : "播放模式"
-                        onClicked: if (root.bridge) root.bridge.cyclePlayMode()
+                        onClicked: if (root.bridge && root.acceptUiAction("playMode", 240)) root.bridge.cyclePlayMode()
                     }
 
                     Rectangle {
@@ -1454,7 +2164,7 @@ ApplicationWindow {
 
                     BottomSlider {
                         title: "人声音量"
-                        valueText: Math.round(vocalGain.value * 100) + "%"
+                        valueText: Math.round((root.bridge && root.bridge.vocalMuted ? 0 : (root.bridge ? root.bridge.vocalGain : vocalGain.value)) * 100) + "%"
                         slider: vocalGain
                         muted: root.bridge ? root.bridge.vocalMuted : false
                         muteClicked: function() { if (root.bridge) root.bridge.toggleVocalMute() }
@@ -1463,7 +2173,7 @@ ApplicationWindow {
 
                     BottomSlider {
                         title: "伴奏音量"
-                        valueText: Math.round(instGain.value * 100) + "%"
+                        valueText: Math.round((root.bridge && root.bridge.instrumentalMuted ? 0 : (root.bridge ? root.bridge.instrumentalGain : instGain.value)) * 100) + "%"
                         slider: instGain
                         muted: root.bridge ? root.bridge.instrumentalMuted : false
                         muteClicked: function() { if (root.bridge) root.bridge.toggleInstrumentalMute() }
@@ -1474,8 +2184,8 @@ ApplicationWindow {
                         title: "主输出增益"
                         valueText: masterSlider.value.toFixed(1) + "dB"
                         slider: masterSlider
-                        muted: false
-                        muteClicked: function() {}
+                        muted: masterSlider.value <= masterSlider.from + 0.01
+                        muteClicked: function() { masterSlider.value = masterSlider.value <= masterSlider.from + 0.01 ? -3.0 : masterSlider.from }
                         Layout.fillWidth: true
                     }
 
@@ -1507,7 +2217,7 @@ ApplicationWindow {
                             RowLayout {
                                 Layout.fillWidth: true
                                 Text {
-                                    text: "跑调破坏度 (F0)"
+                                    text: "跑调程度 (F0)"
                                     color: root.accent2
                                     font.pixelSize: 13
                                     font.bold: true
@@ -1526,6 +2236,8 @@ ApplicationWindow {
                                 to: 1.0
                                 value: root.tonePreviewValue
                                 Layout.fillWidth: true
+                                background: SliderTrack { control: toneVisualSlider }
+                                handle: SliderHandle { control: toneVisualSlider }
                                 onMoved: {
                                     root.tonePreviewValue = value
                                     if (!toneApplyTimer.running)
@@ -1538,6 +2250,25 @@ ApplicationWindow {
                                         if (root.bridge)
                                             root.bridge.setToneDeafRatio(root.tonePreviewValue)
                                     }
+                                }
+                            }
+                            RowLayout {
+                                visible: false
+                                Layout.fillWidth: true
+                                spacing: 8
+                                ProgressBar {
+                                    from: 0
+                                    to: 100
+                                    value: root.bridge ? root.bridge.toneDeafProgress : 0
+                                    indeterminate: root.bridge && root.bridge.toneDeafProgressIndeterminate
+                                    Layout.fillWidth: true
+                                }
+                                Text {
+                                    text: root.bridge ? (root.bridge.toneDeafProgress + "%") : "0%"
+                                    color: root.textMuted
+                                    font.pixelSize: 11
+                                    Layout.preferredWidth: 36
+                                    horizontalAlignment: Text.AlignRight
                                 }
                             }
                         }
@@ -1668,12 +2399,41 @@ ApplicationWindow {
         Layout.fillWidth: true
     }
 
+    component SliderTrack: Rectangle {
+        required property Slider control
+        x: control.leftPadding
+        y: control.topPadding + control.availableHeight / 2 - height / 2
+        width: control.availableWidth
+        height: 6
+        radius: 3
+        color: "#3a3d42"
+        Rectangle {
+            width: parent.width * (control.position || 0)
+            height: parent.height
+            radius: parent.radius
+            color: "#f5f5f5"
+        }
+    }
+
+    component SliderHandle: Rectangle {
+        required property Slider control
+        x: control.leftPadding + control.visualPosition * (control.availableWidth - width)
+        y: control.topPadding + control.availableHeight / 2 - height / 2
+        width: 28
+        height: 28
+        radius: 14
+        color: "#ffffff"
+        border.color: "#d7d7d7"
+        border.width: 2
+    }
+
     component BottomSlider: RowLayout {
         property string title: ""
         property string valueText: ""
         property Slider slider
         property bool muted: false
         property var muteClicked
+        property real displayValue: muted ? (slider ? slider.from : 0) : (slider ? slider.value : 0)
         spacing: 10
         ColumnLayout {
             Layout.fillWidth: true
@@ -1714,13 +2474,22 @@ ApplicationWindow {
                     }
                 }
                 Slider {
+                    id: proxySlider
                     Layout.fillWidth: true
                     from: slider ? slider.from : 0
                     to: slider ? slider.to : 1
-                    value: slider ? slider.value : 0
-                    onMoved: if (slider) slider.value = value
+                    value: displayValue
+                    background: SliderTrack { control: proxySlider }
+                    handle: SliderHandle { control: proxySlider }
+                    onMoved: {
+                        if (muted)
+                            muteClicked()
+                        if (slider)
+                            slider.value = value
+                    }
                 }
             }
         }
     }
 }
+

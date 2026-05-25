@@ -46,10 +46,19 @@ def test_faster_whisper_transcriber_reports_missing_optional_dependency(tmp_path
 def test_generated_lyric_text_prefers_plain_simplified_chinese():
     assert normalize_generated_lyric_text("  愛與夢，聽我說  ") == "爱与梦,听我说"
     assert normalize_generated_lyric_text("說不出你的輪廓 看著你的模樣") == "说不出你的轮廓 看着你的模样"
+    assert normalize_generated_lyric_text("偷縮過的心底 卻證明我來過") == "偷缩过的心底 却证明我来过"
+    assert normalize_generated_lyric_text("迅速的臉龐") == "迅速的脸庞"
 
 
 def test_generated_lyric_text_drops_instruction_hallucination():
     text = "请使用繁体中文或英文,不要使用繁体中文。"
+
+    assert is_instruction_hallucination(text)
+    assert normalize_generated_lyric_text(text) == ""
+
+
+def test_generated_lyric_text_drops_prompt_leakage():
+    text = "歌词只输出歌曲中实际唱出的内容。"
 
     assert is_instruction_hallucination(text)
     assert normalize_generated_lyric_text(text) == ""

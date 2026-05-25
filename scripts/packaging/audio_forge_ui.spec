@@ -37,6 +37,10 @@ for model_name in ["small", "base"]:
     if (local_asr_model / "model.bin").exists():
         local_model_datas.append((str(local_asr_model), f"plugins/models/faster-whisper/{model_name}"))
 
+rubberband_dir = ROOT / "plugins" / "models" / "rubberband"
+if (rubberband_dir / "rubberband.exe").exists():
+    local_model_datas.append((str(rubberband_dir), "plugins/models/rubberband"))
+
 
 a = Analysis(
     [str(ROOT / "ui" / "main_window.py")],

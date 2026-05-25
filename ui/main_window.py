@@ -7,10 +7,12 @@ import os
 import re
 import shutil
 import sys
+import time
 import traceback
 
+import soundfile as sf
 from PyQt6.QtCore import QCoreApplication, QObject, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from PyQt6.QtQml import QQmlApplicationEngine
 
 from core_engine.ai_singer import (
@@ -53,6 +55,7 @@ from core_engine.transcription import (
     FasterWhisperLyricsTranscriber,
     LyricsTranscriptionRequest,
     PreviewLyricsTranscriber,
+    is_instruction_hallucination,
 )
 from harness.eval_harness.audio_latency_test import evaluate_latency
 from harness.cli_harness.generate_mock_audio import build_mock_stems
@@ -109,6 +112,42 @@ class LyricsGenerationWorker(QObject):
             self.failed.emit(traceback.format_exc(limit=1).strip())
 
 
+class ToneDeafRenderWorker(QObject):
+    progress = pyqtSignal(int, str)
+    finished = pyqtSignal(object, float, int)
+    failed = pyqtSignal(str, int)
+
+    def __init__(
+        self,
+        vocal_path: Path,
+        instrumental_path: Path,
+        config: ToneDeafConfig | None,
+        job_id: int,
+    ) -> None:
+        super().__init__()
+        self._vocal_path = vocal_path
+        self._instrumental_path = instrumental_path
+        self._config = config
+        self._job_id = job_id
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            ratio = 0.0 if self._config is None else self._config.drift_ratio
+            self.progress.emit(10, "正在读取当前人声和伴奏")
+            buffers = load_stem_pair(self._vocal_path, self._instrumental_path)
+            if self._config is None or ratio <= 0.01:
+                self.progress.emit(90, "正在恢复原始音高")
+                self.finished.emit(buffers, ratio, self._job_id)
+                return
+            self.progress.emit(35, "正在渲染跑调人声，播放可以继续")
+            rendered = ToneDeafBufferCache().render_buffer(buffers, self._config)
+            self.progress.emit(92, "正在替换试听缓冲")
+            self.finished.emit(rendered, ratio, self._job_id)
+        except Exception:
+            self.failed.emit(traceback.format_exc(limit=1).strip(), self._job_id)
+
+
 class LyricRewriteWorker(QObject):
     progress = pyqtSignal(int, str)
     finished = pyqtSignal(str, str, int)
@@ -148,10 +187,40 @@ class LyricRewriteWorker(QObject):
 
             duration_seconds = max(0.2, (end_frame - start_frame) / sample_rate)
             segment_path = self._output_path.with_name(f"{self._output_path.stem}.segment.wav")
-            self.progress.emit(35, "正在合成改词唱预览")
+            source_segment_path = self._output_path.with_name(f"{self._output_path.stem}.source.wav")
+            source_segment_path.parent.mkdir(parents=True, exist_ok=True)
+            write_audio(source_segment_path, vocal[start_frame:end_frame], sample_rate)
+
+            if not self._backend_config.can_replace_audio:
+                self.progress.emit(35, "当前AI改唱运行环境未就绪，仅更新歌词文本")
+                self._output_path.parent.mkdir(parents=True, exist_ok=True)
+                write_audio(self._output_path, vocal, sample_rate)
+                write_lyric_rewrite_manifest(
+                    self._manifest_path,
+                    {
+                        "lyric": self._lyric,
+                        "lyric_index": self._lyric_index,
+                        "start_ms": self._start_ms,
+                        "end_ms": self._end_ms,
+                        "backend": self._backend_config.backend,
+                        "backend_label": self._backend_config.label,
+                        "preview_vocal_path": str(self._output_path),
+                        "segment_path": str(segment_path),
+                        "source_segment_path": str(source_segment_path),
+                        "used_voice_conversion": False,
+                        "used_content_editor": False,
+                        "audio_replaced": False,
+                    },
+                )
+                self.progress.emit(95, "正在准备试听")
+                self.finished.emit(str(self._output_path), self._lyric, self._lyric_index)
+                return
+
+            self.progress.emit(35, "正在生成改词唱片段")
             workflow = LyricRewriteSingingWorkflow(
                 self._backend_config.build_singer(),
                 self._backend_config.build_voice_converter(),
+                self._backend_config.build_content_editor(),
             )
             synthesized = workflow.run(
                 LyricRewriteSingingRequest(
@@ -161,14 +230,18 @@ class LyricRewriteWorker(QObject):
                     sample_rate=sample_rate,
                     duration_seconds=duration_seconds,
                     rvc_model_path=self._backend_config.rvc_model_path,
+                    source_vocal_path=source_segment_path,
+                    start_ms=self._start_ms,
+                    end_ms=self._end_ms,
                 )
             )
 
             self.progress.emit(70, "正在替换选中歌词片段")
             segment, segment_rate = read_audio(synthesized.output_path)
             if segment_rate != sample_rate:
-                raise ValueError(f"改唱片段采样率不一致：{segment_rate} != {sample_rate}")
-            segment = fit_audio_segment(segment, end_frame - start_frame, vocal.shape[1])
+                segment = resample_audio(segment, segment_rate, sample_rate)
+            segment = fit_generated_audio_segment(segment, end_frame - start_frame, vocal.shape[1])
+            segment = apply_source_energy_envelope(vocal[start_frame:end_frame], segment, sample_rate)
             output = vocal.copy()
             output[start_frame:end_frame] = crossfade_replace(
                 output[start_frame:end_frame],
@@ -188,14 +261,16 @@ class LyricRewriteWorker(QObject):
                     "backend_label": self._backend_config.label,
                     "preview_vocal_path": str(self._output_path),
                     "segment_path": str(segment_path),
+                    "source_segment_path": str(source_segment_path),
                     "used_voice_conversion": synthesized.used_voice_conversion,
+                    "used_content_editor": synthesized.used_content_editor,
+                    "audio_replaced": True,
                 },
             )
             self.progress.emit(95, "正在准备试听")
             self.finished.emit(str(self._output_path), self._lyric, self._lyric_index)
         except Exception:
             self.failed.emit(traceback.format_exc(limit=1).strip())
-
 
 class WorkbenchBridge(QObject):
     statusChanged = pyqtSignal()
@@ -212,6 +287,7 @@ class WorkbenchBridge(QObject):
     lyricsGenerationPromptRequested = pyqtSignal(str)
     lyricsGenerationChanged = pyqtSignal()
     lyricRewriteChanged = pyqtSignal()
+    toneDeafProcessingChanged = pyqtSignal()
 
     def __init__(self, root: Path) -> None:
         super().__init__()
@@ -220,6 +296,7 @@ class WorkbenchBridge(QObject):
         self._projects_root = root / "save"
         self._projects_root.mkdir(parents=True, exist_ok=True)
         self._songs_root = self._projects_root
+        self._migrate_legacy_project_outputs()
         self._vocal_path = self._mock_dir / "vocal.wav"
         self._instrumental_path = self._mock_dir / "instrumental.wav"
         self._output_path = self._mock_dir / "ui_export_mix.wav"
@@ -228,6 +305,7 @@ class WorkbenchBridge(QObject):
         self._master_plugin_paths: list[Path] = []
         self._status = "Ready"
         self._songs: list[SongAsset] = []
+        self._song_duration_label_cache: dict[str, str] = {}
         self._current_song_key: tuple[str, str | None] | None = None
         self._current_song_index = -1
         self._audio_devices: list[AudioOutputDevice] = []
@@ -250,9 +328,12 @@ class WorkbenchBridge(QObject):
         self._lyric_rewrite_preview_path: Path | None = None
         self._lyric_rewrite_manifest_path: Path | None = None
         self._lyric_rewrite_original_vocal_path: Path | None = None
+        self._lyric_rewrite_versions: list[Path] = []
         self._lyric_rewrite_thread: QThread | None = None
         self._lyric_rewrite_worker: LyricRewriteWorker | None = None
         self._playback: DualTrackPlaybackEngine | None = None
+        self._vocal_gain = 1.0
+        self._instrumental_gain = 0.8
         self._audio_output: SoundDeviceOutput | None = None
         self._audio_output_active = False
         self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]))
@@ -264,6 +345,15 @@ class WorkbenchBridge(QObject):
         self._current_lyric_progress = 0.0
         self._lyrics_offset_ms = 0
         self._tone_deaf_ratio = 0.4
+        self._tone_deaf_busy = False
+        self._tone_deaf_progress = 0
+        self._tone_deaf_status = ""
+        self._tone_deaf_thread: QThread | None = None
+        self._tone_deaf_worker: ToneDeafRenderWorker | None = None
+        self._tone_deaf_job_id = 0
+        self._tone_deaf_pending_ratio: float | None = None
+        self._navigation_busy = False
+        self._last_interaction_at: dict[str, float] = {}
         self._last_alignment_latency_ms: float | None = None
         self._last_alignment_passed: bool | None = None
         self._play_mode = "list"
@@ -273,6 +363,32 @@ class WorkbenchBridge(QObject):
         self._playback_timer.timeout.connect(self.advancePlayback)
         self._songs = scan_song_library(self._songs_root)
         self._load_first_song_if_needed()
+
+    def _migrate_legacy_project_outputs(self) -> None:
+        legacy_projects = self._root / "projects"
+        if legacy_projects.exists() and legacy_projects.is_dir():
+            for item in sorted(legacy_projects.iterdir()):
+                target = unique_child_path(self._projects_root, item.name)
+                shutil.move(str(item), str(target))
+                if target.is_dir():
+                    repair_migrated_project_manifest(target)
+            try:
+                legacy_projects.rmdir()
+            except OSError:
+                pass
+
+        legacy_outputs = [
+            path
+            for path in self._root.iterdir()
+            if path.is_file() and not path.suffix and looks_like_wave_file(path)
+        ]
+        if not legacy_outputs:
+            return
+        target_dir = self._projects_root / "_legacy_root_outputs"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for path in legacy_outputs:
+            target = unique_child_path(target_dir, f"{path.name}.wav")
+            shutil.move(str(path), str(target))
 
     @pyqtProperty(str, notify=statusChanged)
     def status(self) -> str:
@@ -290,6 +406,10 @@ class WorkbenchBridge(QObject):
     @pyqtProperty("QStringList", notify=songsChanged)
     def songNames(self) -> list[str]:
         return [song.name for song in self._songs]
+
+    @pyqtProperty("QStringList", notify=songsChanged)
+    def songDurationLabels(self) -> list[str]:
+        return [self._song_duration_label(song) for song in self._songs]
 
     @pyqtProperty(int, notify=songsChanged)
     def currentSongIndex(self) -> int:
@@ -393,9 +513,12 @@ class WorkbenchBridge(QObject):
             config = load_lyric_rewrite_backend_config(self._root)
         except Exception as exc:
             return f"改词唱配置有误：{exc}"
-        if config.config_path is None:
-            return "改词唱后端：内置实验预览（无需模型）"
-        return f"改词唱后端：{config.label}（{config.config_path.name}）"
+        source = "自动检测" if config.config_path is None else config.config_path.name
+        return f"改词唱后端：{config.label}（{source}）。{config.readiness_label}"
+
+    @pyqtProperty("QStringList", notify=lyricRewriteChanged)
+    def lyricRewriteVersionLabels(self) -> list[str]:
+        return [lyric_rewrite_version_label(path, index) for index, path in enumerate(self._lyric_rewrite_versions)]
 
     @pyqtProperty(str, notify=pathsChanged)
     def vocalPath(self) -> str:
@@ -479,6 +602,18 @@ class WorkbenchBridge(QObject):
             return False
         return self._playback.controls.instrumental_muted
 
+    @pyqtProperty(float, notify=playbackChanged)
+    def vocalGain(self) -> float:
+        if self._playback is not None:
+            return self._playback.controls.vocal_gain
+        return self._vocal_gain
+
+    @pyqtProperty(float, notify=playbackChanged)
+    def instrumentalGain(self) -> float:
+        if self._playback is not None:
+            return self._playback.controls.instrumental_gain
+        return self._instrumental_gain
+
     @pyqtProperty(str, notify=lyricPositionChanged)
     def currentLyric(self) -> str:
         return self._current_lyric
@@ -515,6 +650,22 @@ class WorkbenchBridge(QObject):
     def toneDeafRatio(self) -> float:
         return self._tone_deaf_ratio
 
+    @pyqtProperty(bool, notify=toneDeafProcessingChanged)
+    def toneDeafBusy(self) -> bool:
+        return self._tone_deaf_busy
+
+    @pyqtProperty(int, notify=toneDeafProcessingChanged)
+    def toneDeafProgress(self) -> int:
+        return self._tone_deaf_progress
+
+    @pyqtProperty(str, notify=toneDeafProcessingChanged)
+    def toneDeafStatus(self) -> str:
+        return self._tone_deaf_status
+
+    @pyqtProperty(bool, notify=toneDeafProcessingChanged)
+    def toneDeafProgressIndeterminate(self) -> bool:
+        return self._tone_deaf_busy and self._tone_deaf_progress < 90
+
     @pyqtProperty(int, notify=importOptionsChanged)
     def rightPanelPresetIndex(self) -> int:
         return 1 if self._separator_backend == "demucs" else 0
@@ -527,6 +678,8 @@ class WorkbenchBridge(QObject):
 
     @pyqtProperty(str, notify=playbackChanged)
     def toneMonitorStatus(self) -> str:
+        if self._tone_deaf_busy:
+            return self._tone_deaf_status or "正在处理跑调效果"
         if self._playback is None:
             return "请先导入或加载歌曲"
         if self._tone_deaf_ratio <= 0.01:
@@ -594,6 +747,10 @@ class WorkbenchBridge(QObject):
         try:
             buffers = self._build_playback_buffers()
             self._playback = DualTrackPlaybackEngine(buffers)
+            self._playback.set_gains(
+                vocal_gain=self._vocal_gain,
+                instrumental_gain=self._instrumental_gain,
+            )
             timeline = load_lyrics_timeline(self._lyrics_path)
             self._lyrics_sync = LyricPlaybackSynchronizer(timeline, self._lyrics_offset_ms)
             self._set_lyric_timeline_view(timeline)
@@ -607,6 +764,9 @@ class WorkbenchBridge(QObject):
 
     @pyqtSlot()
     def play(self) -> None:
+        if self._navigation_busy:
+            self._set_status("歌曲正在切换，请稍等")
+            return
         if self._playback is None:
             self.loadPlayback()
         if self._playback is None:
@@ -642,6 +802,9 @@ class WorkbenchBridge(QObject):
     @pyqtSlot()
     def startAudioOutput(self) -> None:
         try:
+            if self._navigation_busy:
+                self._set_status("歌曲正在切换，请稍等")
+                return
             if self._playback is None:
                 self.loadPlayback()
             if self._playback is None:
@@ -700,6 +863,8 @@ class WorkbenchBridge(QObject):
 
     @pyqtSlot(float)
     def seekProgress(self, progress: float) -> None:
+        if self._navigation_busy:
+            return
         if self._playback is None:
             self.loadPlayback()
         if self._playback is None:
@@ -712,17 +877,37 @@ class WorkbenchBridge(QObject):
 
     @pyqtSlot(float, float)
     def setTrackGains(self, vocal_gain: float, instrumental_gain: float) -> None:
+        self._vocal_gain = max(0.0, float(vocal_gain))
+        self._instrumental_gain = max(0.0, float(instrumental_gain))
         if self._playback is None:
+            self.playbackChanged.emit()
             return
-        self._playback.set_gains(vocal_gain=vocal_gain, instrumental_gain=instrumental_gain)
+        self._playback.set_gains(
+            vocal_gain=self._vocal_gain,
+            instrumental_gain=self._instrumental_gain,
+        )
         self.playbackChanged.emit()
 
     @pyqtSlot(float)
     def setToneDeafRatio(self, ratio: float) -> None:
-        self._tone_deaf_ratio = max(0.0, min(1.0, float(ratio)))
+        target_ratio = max(0.0, min(1.0, float(ratio)))
+        self._tone_deaf_ratio = target_ratio
         if self._playback is None:
             self._set_status("已设置跑调强度；导入、加载或导出时生效")
             self.playbackChanged.emit()
+            return
+
+        if self._tone_deaf_busy:
+            self._tone_deaf_pending_ratio = target_ratio
+            self._set_tone_deaf_progress(
+                self._tone_deaf_progress,
+                f"正在处理上一版跑调，稍后应用最新强度：{round(target_ratio * 100)}%",
+            )
+            self.playbackChanged.emit()
+            return
+
+        if QCoreApplication.instance() is not None:
+            self._start_tone_deaf_render(target_ratio)
             return
 
         try:
@@ -1021,8 +1206,9 @@ class WorkbenchBridge(QObject):
         if lyric_index < 0 or lyric_index >= len(lines):
             self._set_status("请先双击一行歌词，再生成改词唱。")
             return
-        if not self._vocal_path.exists():
-            self._set_status("请先导入或加载歌曲，改词唱需要人声音轨。")
+        rewrite_vocal_path = self._resolve_lyric_rewrite_vocal_path()
+        if rewrite_vocal_path is None:
+            self._set_status("当前歌曲缺少可用人声音轨。请重新加载左侧歌曲，或重新导入一次歌曲。")
             return
 
         line = lines[lyric_index]
@@ -1042,6 +1228,7 @@ class WorkbenchBridge(QObject):
             self._set_status(f"改词唱配置有误：{exc}")
             return
 
+        source_vocal_path = self._lyric_rewrite_original_vocal_path or rewrite_vocal_path
         output_path = self._lyric_rewrite_output_path(lyric_index)
         manifest_path = output_path.with_suffix(".json")
         if QCoreApplication.instance() is None:
@@ -1050,7 +1237,7 @@ class WorkbenchBridge(QObject):
                 lyric_index,
                 start_ms,
                 end_ms,
-                self._vocal_path,
+                source_vocal_path,
                 output_path,
                 backend_config,
                 manifest_path,
@@ -1071,7 +1258,7 @@ class WorkbenchBridge(QObject):
             lyric_index,
             start_ms,
             end_ms,
-            self._vocal_path,
+            source_vocal_path,
             output_path,
             backend_config,
             manifest_path,
@@ -1087,9 +1274,40 @@ class WorkbenchBridge(QObject):
         self._lyric_rewrite_thread.finished.connect(self._cleanup_lyric_rewrite_thread)
         self._lyric_rewrite_thread.start()
 
+    def _resolve_lyric_rewrite_vocal_path(self) -> Path | None:
+        candidates: list[Path] = []
+        if self._lyric_rewrite_original_vocal_path is not None:
+            candidates.append(self._lyric_rewrite_original_vocal_path)
+        candidates.append(self._vocal_path)
+
+        if 0 <= self._current_song_index < len(self._songs):
+            song = self._songs[self._current_song_index]
+            candidates.append(song.vocal_path)
+            if song.source_path is not None:
+                candidates.append(song.source_path)
+            if song.is_imported_project:
+                try:
+                    session = load_song_session(song)
+                    candidates.append(session.asset.vocal_path)
+                    if session.asset.source_path is not None:
+                        candidates.append(session.asset.source_path)
+                except Exception:
+                    pass
+
+        if self._current_source_path is not None:
+            candidates.append(self._current_source_path)
+        candidates.append(self._instrumental_path)
+
+        for candidate in candidates:
+            if candidate.exists() and candidate.is_file():
+                self._vocal_path = candidate
+                return candidate
+        return None
+
     @pyqtSlot()
     def reloadOriginalVocal(self) -> None:
         restored_lyrics = self._restore_original_lyrics()
+        self._delete_lyric_rewrite_version_files()
         if self._lyric_rewrite_original_vocal_path is not None and self._lyric_rewrite_original_vocal_path.exists():
             self._vocal_path = self._lyric_rewrite_original_vocal_path
             self._set_project_active_vocal(None)
@@ -1106,7 +1324,7 @@ class WorkbenchBridge(QObject):
         if self._current_song_index >= 0 and self._current_song_index < len(self._songs):
             self._set_project_active_vocal(None)
             self._clear_lyric_rewrite_preview_state()
-            self.loadSongAt(self._current_song_index)
+            self._load_song_at(self._current_song_index, throttle=False)
             self._set_status("已恢复当前歌曲的原始人声音轨")
             return
         self._set_status("当前没有可恢复的歌曲工程。")
@@ -1126,13 +1344,21 @@ class WorkbenchBridge(QObject):
             self._lyric_rewrite_original_vocal_path = self._vocal_path
         self._vocal_path = self._lyric_rewrite_preview_path
         self._set_project_active_vocal(self._lyric_rewrite_preview_path)
+        self._refresh_lyric_rewrite_versions()
         self._lyric_rewrite_progress = 100
-        self._lyric_rewrite_status = f"改词唱预览已生成：{lyric}"
+        self._lyric_rewrite_status = f"歌词修改已生成：{lyric}"
         self._set_lyric_rewrite_busy(False)
         self._apply_lyric_rewrite_text(lyric_index, lyric)
         self.pathsChanged.emit()
         self.loadPlayback()
-        self._set_status("改词唱预览已套用到当前人声，点击播放即可试听。真实模型后端后续可替换 preview。")
+        try:
+            manifest = json.loads(self._lyric_rewrite_manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, AttributeError):
+            manifest = {}
+        if manifest.get("audio_replaced") is False:
+            self._set_status("已更新歌词文本。当前AI改唱运行环境未就绪，所以播放仍是原唱人声，不会读出新歌词。")
+        else:
+            self._set_status("改词唱音频已套用到当前人声，点击播放即可试听。")
 
     @pyqtSlot(str)
     def _handle_lyric_rewrite_failed(self, message: str) -> None:
@@ -1155,15 +1381,89 @@ class WorkbenchBridge(QObject):
         self._lyric_rewrite_preview_path = None
         self._lyric_rewrite_manifest_path = None
         self._lyric_rewrite_original_vocal_path = None
+        self._lyric_rewrite_versions = []
         self._lyric_rewrite_progress = 0
         self._lyric_rewrite_status = "双击歌词可生成实验版改词唱预览"
         self.lyricRewriteChanged.emit()
 
+    @pyqtSlot(int)
+    def deleteLyricRewriteVersion(self, index: int) -> None:
+        if index < 0 or index >= len(self._lyric_rewrite_versions):
+            self._set_status("请先选择要删除的试听版本。")
+            return
+        path = self._lyric_rewrite_versions[index]
+        active_deleted = self._vocal_path.resolve() == path.resolve()
+        for candidate in [
+            path,
+            path.with_suffix(".json"),
+            path.with_name(f"{path.stem}.segment.wav"),
+            path.with_name(f"{path.stem}.source.wav"),
+        ]:
+            try:
+                if candidate.exists():
+                    candidate.unlink()
+            except OSError:
+                pass
+        if active_deleted:
+            self.reloadOriginalVocal()
+            return
+        self._refresh_lyric_rewrite_versions()
+        self._set_status("已删除选中的改词唱试听版本。")
+
+    @pyqtSlot()
+    def clearLyricRewriteVersions(self) -> None:
+        self._delete_lyric_rewrite_version_files()
+        self._lyric_rewrite_versions = []
+        self.lyricRewriteChanged.emit()
+        self._set_status("已清空改词唱试听版本。")
+
+    def _delete_lyric_rewrite_version_files(self) -> None:
+        output_dir = self._lyric_rewrite_output_dir()
+        if not output_dir.exists():
+            return
+        for candidate in output_dir.glob("*"):
+            if candidate.is_file():
+                try:
+                    candidate.unlink()
+                except OSError:
+                    pass
+    @pyqtSlot(int)
+    def applyLyricRewriteVersion(self, index: int) -> None:
+        if index < 0 or index >= len(self._lyric_rewrite_versions):
+            self._set_status("请先选择一个改词唱试听版本。")
+            return
+        path = self._lyric_rewrite_versions[index]
+        if not path.exists():
+            self._refresh_lyric_rewrite_versions()
+            self._set_status("该改词唱版本文件不存在，已刷新列表。")
+            return
+        if self._lyric_rewrite_original_vocal_path is None and self._vocal_path.exists():
+            self._lyric_rewrite_original_vocal_path = self._vocal_path
+        self._lyric_rewrite_preview_path = path
+        self._lyric_rewrite_manifest_path = path.with_suffix(".json")
+        self._vocal_path = path
+        self._set_project_active_vocal(path)
+        self._apply_lyric_rewrite_manifest_text(self._lyric_rewrite_manifest_path)
+        self.pathsChanged.emit()
+        self.lyricRewriteChanged.emit()
+        self.loadPlayback()
+        self._set_status(f"已切换到改词唱试听版本：{path.name}")
+
     def _lyric_rewrite_output_path(self, lyric_index: int) -> Path:
-        base_dir = self._lyrics_path.parent if self._lyrics_path else self._projects_root
-        output_dir = base_dir / "ai_singer"
+        output_dir = self._lyric_rewrite_output_dir()
         song_name = sanitize_filename(self._current_song_name())
-        return output_dir / f"{song_name}_rewrite_{lyric_index + 1:03d}.wav"
+        base = output_dir / f"{song_name}_rewrite_{lyric_index + 1:03d}.wav"
+        if not base.exists():
+            return base
+        for version in range(2, 1000):
+            candidate = output_dir / f"{song_name}_rewrite_{lyric_index + 1:03d}_v{version:02d}.wav"
+            if not candidate.exists():
+                return candidate
+        return output_dir / f"{song_name}_rewrite_{lyric_index + 1:03d}_{len(list(output_dir.glob('*.wav'))) + 1}.wav"
+
+    def _lyric_rewrite_output_dir(self) -> Path:
+        base_dir = self._lyrics_path.parent if self._lyrics_path else self._projects_root
+        return base_dir / "ai_singer"
 
     def _current_song_name(self) -> str:
         if 0 <= self._current_song_index < len(self._songs):
@@ -1185,6 +1485,34 @@ class WorkbenchBridge(QObject):
             self._update_lyrics()
         except Exception as exc:
             self._set_status(f"改词唱已生成，但歌词文件更新失败：{exc}")
+
+    def _apply_lyric_rewrite_manifest_text(self, manifest_path: Path | None) -> None:
+        if manifest_path is None or not manifest_path.exists():
+            return
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        lyric = str(manifest.get("lyric", "")).strip()
+        lyric_index = manifest.get("lyric_index")
+        if not lyric or not isinstance(lyric_index, int):
+            return
+        self._apply_lyric_rewrite_text(lyric_index, lyric)
+
+    def _refresh_lyric_rewrite_versions(self) -> None:
+        output_dir = self._lyric_rewrite_output_dir()
+        if not output_dir.exists():
+            self._lyric_rewrite_versions = []
+            self.lyricRewriteChanged.emit()
+            return
+        manifests = sorted(output_dir.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+        versions: list[Path] = []
+        for manifest_path in manifests:
+            audio_path = lyric_rewrite_audio_path_from_manifest(manifest_path)
+            if audio_path is not None and audio_path.exists():
+                versions.append(audio_path)
+        self._lyric_rewrite_versions = versions
+        self.lyricRewriteChanged.emit()
 
     def _restore_original_lyrics(self) -> bool:
         if not self._lyrics_path.exists():
@@ -1237,6 +1565,34 @@ class WorkbenchBridge(QObject):
             self.songsChanged.emit()
             self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
 
+    @pyqtSlot()
+    def openSongsRootFolder(self) -> None:
+        self._songs_root.mkdir(parents=True, exist_ok=True)
+        self._open_folder(self._songs_root, "歌曲库文件夹")
+
+    @pyqtSlot()
+    def openCurrentSongFolder(self) -> None:
+        if 0 <= self._current_song_index < len(self._songs):
+            self._open_folder(self._songs[self._current_song_index].root, "当前歌曲文件夹")
+            return
+        self.openSongsRootFolder()
+
+    @pyqtSlot()
+    def openLyricRewriteFolder(self) -> None:
+        if self._lyric_rewrite_preview_path is not None:
+            self._open_folder(self._lyric_rewrite_preview_path.parent, "改词唱版本文件夹")
+            return
+        base_dir = self._lyrics_path.parent if self._lyrics_path else self._songs_root
+        self._open_folder(base_dir / "ai_singer", "改词唱版本文件夹")
+
+    def _open_folder(self, folder: Path, label: str) -> None:
+        folder.mkdir(parents=True, exist_ok=True)
+        opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+        if opened:
+            self._set_status(f"已打开{label}：{folder}")
+        else:
+            self._set_status(f"无法自动打开{label}，请手动进入：{folder}")
+
     def _load_first_song_if_needed(self) -> None:
         if self._playback is not None or self._current_song_index >= 0:
             return
@@ -1245,10 +1601,19 @@ class WorkbenchBridge(QObject):
         first_song = self._songs[0]
         if first_song.source_path is not None:
             return
-        self.loadSongAt(0)
+        self._load_song_at(0, throttle=False)
 
     @pyqtSlot(int)
     def loadSongAt(self, index: int) -> None:
+        self._load_song_at(index, throttle=True)
+
+    def _load_song_at(self, index: int, throttle: bool) -> None:
+        if throttle and not self._accept_interaction("load_song", 450):
+            return
+        if self._navigation_busy or self._import_busy or self._tone_deaf_busy:
+            self._set_status("正在处理上一项操作，请稍等")
+            return
+        self._navigation_busy = True
         try:
             if index < 0 or index >= len(self._songs):
                 self._set_status("请先在左侧选择歌曲")
@@ -1272,6 +1637,7 @@ class WorkbenchBridge(QObject):
             if session.asset.lyrics_path is not None:
                 self._lyrics_path = session.asset.lyrics_path
             self._output_path = self._mock_dir / f"{sanitize_filename(session.asset.name)}_export.wav"
+            self._refresh_lyric_rewrite_versions()
             timeline = load_lyrics_timeline(self._lyrics_path)
             self._lyrics_sync = LyricPlaybackSynchronizer(timeline, self._lyrics_offset_ms)
             self._set_lyric_timeline_view(timeline)
@@ -1282,6 +1648,8 @@ class WorkbenchBridge(QObject):
             self.loadPlayback()
         except Exception:
             self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
+        finally:
+            self._navigation_busy = False
 
     @pyqtSlot(int)
     def deleteSongAt(self, index: int) -> None:
@@ -1289,51 +1657,80 @@ class WorkbenchBridge(QObject):
             self._set_status("请先在左侧选择要删除的歌曲")
             return
         removed = self._songs.pop(index)
+        deleted_paths = self._delete_song_storage(removed)
         removed_current = self._current_song_key == song_key(removed)
         if self._current_song_index == index:
             removed_current = True
         elif self._current_song_index > index:
             self._current_song_index -= 1
         self.songsChanged.emit()
-        self._set_status(f"已从列表移除：{removed.name}")
+        delete_text = "并删除磁盘文件" if deleted_paths else "，但未找到可删除的磁盘文件"
+        self._set_status(f"已从列表移除：{removed.name}{delete_text}")
         if not removed_current:
             return
 
         self.stop()
+        self._clear_lyric_rewrite_preview_state()
         if self._songs:
             next_index = min(index, len(self._songs) - 1)
-            self.loadSongAt(next_index)
+            self._load_song_at(next_index, throttle=False)
         else:
-            self._current_song_key = None
-            self._current_song_index = -1
-            self._playback = None
-            self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]), self._lyrics_offset_ms)
-            self._set_lyric_timeline_view(LyricTimeline([]))
-            self._current_lyric = ""
-            self._next_lyric = ""
-            self._current_lyric_index = -1
-            self._current_lyric_progress = 0.0
-            self._emit_lyrics_reloaded()
-            self.playbackChanged.emit()
+            self._clear_current_song_state()
 
     @pyqtSlot()
     def clearSongList(self) -> None:
         self.stop()
+        deleted_count = 0
+        for song in list(self._songs):
+            if self._delete_song_storage(song):
+                deleted_count += 1
         self._songs = []
+        self._clear_current_song_state()
+        self.songsChanged.emit()
+        self._set_status(f"已清空左侧歌曲列表，并删除 {deleted_count} 个磁盘项目")
+
+    def _clear_current_song_state(self) -> None:
         self._current_song_key = None
         self._current_song_index = -1
         self._current_source_path = None
         self._playback = None
+        self._clear_lyric_rewrite_preview_state()
         self._lyrics_sync = LyricPlaybackSynchronizer(LyricTimeline([]), self._lyrics_offset_ms)
         self._set_lyric_timeline_view(LyricTimeline([]))
         self._current_lyric = ""
         self._next_lyric = ""
         self._current_lyric_index = -1
         self._current_lyric_progress = 0.0
-        self.songsChanged.emit()
         self._emit_lyrics_reloaded()
         self.playbackChanged.emit()
-        self._set_status("已清空左侧歌曲列表，不会删除磁盘文件")
+
+    def _delete_song_storage(self, song: SongAsset) -> list[Path]:
+        targets: list[Path] = []
+        if song.is_imported_project:
+            targets.append(song.root)
+        elif song.source_path is not None:
+            targets.append(song.source_path)
+            for suffix in (".lrc", ".srt"):
+                targets.append(song.source_path.with_suffix(suffix))
+
+        deleted: list[Path] = []
+        for target in unique_paths(targets):
+            if not target.exists() or not self._is_safe_song_delete_target(target):
+                continue
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+            deleted.append(target)
+        return deleted
+
+    def _is_safe_song_delete_target(self, target: Path) -> bool:
+        try:
+            root = self._songs_root.resolve()
+            resolved = target.resolve()
+            return resolved == root or resolved.is_relative_to(root)
+        except (OSError, RuntimeError):
+            return False
 
     @pyqtSlot()
     def advancePlayback(self) -> None:
@@ -1446,17 +1843,112 @@ class WorkbenchBridge(QObject):
             return None
         return self._audio_devices[self._selected_audio_device_index].id
 
+    def _accept_interaction(self, key: str, cooldown_ms: int) -> bool:
+        now = time.monotonic()
+        previous = self._last_interaction_at.get(key, 0.0)
+        if (now - previous) * 1000.0 < cooldown_ms:
+            return False
+        self._last_interaction_at[key] = now
+        return True
+
+    def _start_tone_deaf_render(self, ratio: float) -> None:
+        self._tone_deaf_job_id += 1
+        job_id = self._tone_deaf_job_id
+        self._tone_deaf_pending_ratio = None
+        self._set_tone_deaf_busy(True)
+        self._set_tone_deaf_progress(5, f"正在准备跑调效果：{round(ratio * 100)}%")
+        self._set_status(self._tone_deaf_status)
+
+        self._tone_deaf_thread = QThread(self)
+        self._tone_deaf_worker = ToneDeafRenderWorker(
+            self._vocal_path,
+            self._instrumental_path,
+            self._tone_deaf_config(ratio),
+            job_id,
+        )
+        self._tone_deaf_worker.moveToThread(self._tone_deaf_thread)
+        self._tone_deaf_thread.started.connect(self._tone_deaf_worker.run)
+        self._tone_deaf_worker.progress.connect(self._handle_tone_deaf_progress)
+        self._tone_deaf_worker.finished.connect(self._handle_tone_deaf_finished)
+        self._tone_deaf_worker.failed.connect(self._handle_tone_deaf_failed)
+        self._tone_deaf_worker.finished.connect(self._tone_deaf_thread.quit)
+        self._tone_deaf_worker.failed.connect(self._tone_deaf_thread.quit)
+        self._tone_deaf_thread.finished.connect(self._tone_deaf_worker.deleteLater)
+        self._tone_deaf_thread.finished.connect(self._cleanup_tone_deaf_thread)
+        self._tone_deaf_thread.start()
+
+    @pyqtSlot(int, str)
+    def _handle_tone_deaf_progress(self, progress: int, message: str) -> None:
+        self._set_tone_deaf_progress(progress, message)
+        self._set_status(message)
+
+    @pyqtSlot(object, float, int)
+    def _handle_tone_deaf_finished(self, buffers, ratio: float, job_id: int) -> None:
+        if job_id != self._tone_deaf_job_id:
+            return
+        if self._playback is not None:
+            self._playback.replace_buffers(buffers, keep_position=True)
+        self._tone_deaf_ratio = max(0.0, min(1.0, float(ratio)))
+        self._set_tone_deaf_progress(100, f"跑调效果已应用：{round(self._tone_deaf_ratio * 100)}%")
+        self._set_tone_deaf_busy(False)
+        self.playbackChanged.emit()
+        if self._playback is not None and self._playback.is_playing:
+            self._set_status(f"已实时应用跑调程度：{round(self._tone_deaf_ratio * 100)}%，播放会继续")
+        else:
+            self._set_status(f"已应用跑调程度：{round(self._tone_deaf_ratio * 100)}%")
+
+        pending = self._tone_deaf_pending_ratio
+        self._tone_deaf_pending_ratio = None
+        if pending is not None and abs(pending - self._tone_deaf_ratio) > 0.005:
+            QTimer.singleShot(0, lambda value=pending: self.setToneDeafRatio(value))
+
+    @pyqtSlot(str, int)
+    def _handle_tone_deaf_failed(self, message: str, job_id: int) -> None:
+        if job_id != self._tone_deaf_job_id:
+            return
+        self._set_tone_deaf_progress(0, "跑调处理失败")
+        self._set_tone_deaf_busy(False)
+        self._set_status(f"跑调处理失败：{format_user_error(message)}")
+
+    @pyqtSlot()
+    def _cleanup_tone_deaf_thread(self) -> None:
+        if self._tone_deaf_thread is not None:
+            self._tone_deaf_thread.deleteLater()
+        self._tone_deaf_thread = None
+        self._tone_deaf_worker = None
+
+    def _set_tone_deaf_busy(self, value: bool) -> None:
+        self._tone_deaf_busy = value
+        self.toneDeafProcessingChanged.emit()
+        self.playbackChanged.emit()
+
+    def _set_tone_deaf_progress(self, progress: int, message: str) -> None:
+        self._tone_deaf_progress = max(0, min(100, int(progress)))
+        self._tone_deaf_status = message
+        self.toneDeafProcessingChanged.emit()
+
+    def _tone_deaf_config(self, ratio: float | None = None) -> ToneDeafConfig | None:
+        target_ratio = self._tone_deaf_ratio if ratio is None else max(0.0, min(1.0, float(ratio)))
+        if target_ratio <= 0.01:
+            return None
+        rubberband_executable = None
+        try:
+            rubberband_executable = resolve_audio_tool("rubberband", self._root)
+        except FileNotFoundError:
+            rubberband_executable = None
+        return ToneDeafConfig(
+            drift_ratio=target_ratio,
+            random_seed=7,
+            rubberband_executable=rubberband_executable,
+            temporary_dir=self._root / "save" / ".tmp",
+        )
+
     def _build_playback_buffers(self):
         buffers = load_stem_pair(self._vocal_path, self._instrumental_path)
-        if self._tone_deaf_ratio <= 0.01:
+        config = self._tone_deaf_config()
+        if config is None:
             return buffers
-        return self._tone_deaf_cache.render_buffer(
-            buffers,
-            ToneDeafConfig(
-                drift_ratio=self._tone_deaf_ratio,
-                random_seed=7,
-            ),
-        )
+        return self._tone_deaf_cache.render_buffer(buffers, config)
 
     def _build_import_config(
         self, source_path: Path, separator_backend: str, lyrics_backend: str
@@ -1486,7 +1978,7 @@ class WorkbenchBridge(QObject):
         self._current_song_index = 0
         self.pathsChanged.emit()
         self.loadPlayback()
-        self._upsert_song(project.asset)
+        self._refresh_songs_after_import(project.asset)
         self._set_status(
             f"导入成功：{project.name}"
             f"（分离={separator_backend_label(separator_backend)}，"
@@ -1511,7 +2003,7 @@ class WorkbenchBridge(QObject):
 
         if self._play_mode == "list" and self._songs:
             next_index = self._next_song_index()
-            self.loadSongAt(next_index)
+            self._load_song_at(next_index, throttle=False)
             if was_audio_active:
                 self.startAudioOutput()
             else:
@@ -1538,11 +2030,39 @@ class WorkbenchBridge(QObject):
         return None
 
     def _lyrics_output_path(self) -> Path:
-        if self._current_source_path is not None:
-            return self._current_source_path.parent / "lyrics.lrc"
+        if 0 <= self._current_song_index < len(self._songs):
+            song = self._songs[self._current_song_index]
+            if song.is_imported_project:
+                return song.root / "lyrics.lrc"
+            return self._projects_root / sanitize_filename(song.name) / "lyrics.lrc"
+        project_dir = self._current_project_dir()
+        if project_dir is not None:
+            return project_dir / "lyrics.lrc"
         if self._lyrics_path:
-            return self._lyrics_path.with_suffix(".lrc")
-        return self._mock_dir / "lyrics.lrc"
+            if self._is_path_inside_save(self._lyrics_path):
+                return self._lyrics_path.with_suffix(".lrc")
+            return self._projects_root / sanitize_filename(self._current_song_name()) / "lyrics.lrc"
+        return self._projects_root / sanitize_filename(self._current_song_name()) / "lyrics.lrc"
+
+    def _current_project_dir(self) -> Path | None:
+        candidates = [
+            self._vocal_path.parent,
+            self._instrumental_path.parent,
+            None if self._lyrics_path is None else self._lyrics_path.parent,
+        ]
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            for folder in [candidate, *candidate.parents]:
+                if folder.parent == self._projects_root:
+                    return folder
+        return None
+
+    def _is_path_inside_save(self, path: Path) -> bool:
+        try:
+            return path.resolve().is_relative_to(self._projects_root.resolve())
+        except (OSError, RuntimeError):
+            return False
 
     def _lyrics_needs_generation(self) -> bool:
         if not self._lyrics_path or not self._lyrics_path.exists():
@@ -1617,6 +2137,17 @@ class WorkbenchBridge(QObject):
         self._current_song_index = 0
         self.songsChanged.emit()
 
+    def _refresh_songs_after_import(self, asset: SongAsset) -> None:
+        imported_key = song_key(asset)
+        self._songs = scan_song_library(self._songs_root)
+        for index, song in enumerate(self._songs):
+            if song_key(song) == imported_key or song.root == asset.root:
+                self._current_song_index = index
+                self._current_song_key = song_key(song)
+                self.songsChanged.emit()
+                return
+        self._upsert_song(asset)
+
     def _build_separator(self, backend: str):
         if backend == "demucs":
             # GUI 默认仍使用 CPU，避免在普通轻薄本上误选不可用 GPU。
@@ -1683,6 +2214,21 @@ class WorkbenchBridge(QObject):
     def _set_status(self, value: str) -> None:
         self._status = value
         self.statusChanged.emit()
+
+    def _song_duration_label(self, song: SongAsset) -> str:
+        path = song.source_path or song.vocal_path
+        cache_key = str(path)
+        cached = self._song_duration_label_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            info = sf.info(str(path))
+            duration = info.frames / info.samplerate if info.samplerate > 0 else 0.0
+            label = format_seconds(duration)
+        except Exception:
+            label = "--:--"
+        self._song_duration_label_cache[cache_key] = label
+        return label
 
 
 def format_seconds(seconds: float) -> str:
@@ -1811,6 +2357,66 @@ def fit_audio_segment(audio, frame_count: int, channel_count: int):
     return np.concatenate([audio, padding], axis=0)
 
 
+def fit_generated_audio_segment(audio, frame_count: int, channel_count: int):
+    import numpy as np
+
+    if audio.shape[1] != channel_count:
+        if audio.shape[1] == 1:
+            audio = audio.repeat(channel_count, axis=1)
+        elif channel_count == 1:
+            audio = audio.mean(axis=1, keepdims=True)
+        else:
+            audio = audio[:, :channel_count]
+    if audio.shape[0] <= 1 or frame_count <= 1:
+        return fit_audio_segment(audio, frame_count, channel_count)
+    if abs(audio.shape[0] - frame_count) <= max(256, frame_count // 20):
+        return fit_audio_segment(audio, frame_count, channel_count)
+
+    source_positions = np.linspace(0.0, 1.0, audio.shape[0], dtype=np.float32)
+    target_positions = np.linspace(0.0, 1.0, frame_count, dtype=np.float32)
+    rendered = np.empty((frame_count, channel_count), dtype=np.float32)
+    for channel in range(channel_count):
+        rendered[:, channel] = np.interp(target_positions, source_positions, audio[:, channel])
+    return rendered
+
+
+def resample_audio(audio, source_rate: int, target_rate: int):
+    import numpy as np
+
+    if source_rate == target_rate:
+        return audio
+    if source_rate <= 0 or target_rate <= 0 or audio.shape[0] <= 1:
+        return audio
+    target_frames = max(1, round(audio.shape[0] * target_rate / source_rate))
+    source_positions = np.linspace(0.0, 1.0, audio.shape[0], dtype=np.float32)
+    target_positions = np.linspace(0.0, 1.0, target_frames, dtype=np.float32)
+    rendered = np.empty((target_frames, audio.shape[1]), dtype=np.float32)
+    for channel in range(audio.shape[1]):
+        rendered[:, channel] = np.interp(target_positions, source_positions, audio[:, channel])
+    return rendered
+
+
+def apply_source_energy_envelope(source, replacement, sample_rate: int):
+    import numpy as np
+
+    if source.shape != replacement.shape or replacement.size == 0:
+        return replacement
+    frame_count = replacement.shape[0]
+    window = max(64, min(frame_count, round(sample_rate * 0.08)))
+    if window <= 1:
+        return replacement
+    kernel = np.ones(window, dtype=np.float32) / window
+    source_energy = np.sqrt(
+        np.convolve(np.mean(np.square(source), axis=1), kernel, mode="same") + 1e-8
+    )
+    replacement_energy = np.sqrt(
+        np.convolve(np.mean(np.square(replacement), axis=1), kernel, mode="same") + 1e-8
+    )
+    envelope = source_energy / np.maximum(replacement_energy, 1e-4)
+    envelope = np.clip(envelope, 0.20, 1.45).astype(np.float32)[:, np.newaxis]
+    return np.clip(replacement * envelope, -0.96, 0.96).astype(np.float32)
+
+
 def crossfade_replace(original, replacement, sample_rate: int):
     import numpy as np
 
@@ -1833,6 +2439,40 @@ def write_lyric_rewrite_manifest(path: Path, data: dict) -> None:
         json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def lyric_rewrite_audio_path_from_manifest(manifest_path: Path) -> Path | None:
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    value = manifest.get("preview_vocal_path")
+    if not value:
+        return None
+    audio_path = Path(str(value))
+    if not audio_path.is_absolute():
+        audio_path = manifest_path.parent / audio_path
+    return audio_path
+
+
+def lyric_rewrite_version_label(audio_path: Path, index: int) -> str:
+    manifest_path = audio_path.with_suffix(".json")
+    lyric = ""
+    lyric_index = None
+    backend = ""
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        lyric = str(manifest.get("lyric", "")).strip()
+        lyric_index = manifest.get("lyric_index")
+        backend = str(manifest.get("backend_label") or manifest.get("backend") or "").strip()
+    except (OSError, json.JSONDecodeError):
+        pass
+    line_label = f"第 {lyric_index + 1} 句" if isinstance(lyric_index, int) else f"版本 {index + 1}"
+    lyric_label = lyric if lyric else audio_path.stem
+    if len(lyric_label) > 18:
+        lyric_label = lyric_label[:18] + "..."
+    suffix = f" · {backend}" if backend else ""
+    return f"{line_label}：{lyric_label}{suffix}"
 
 
 def update_project_active_vocal(manifest_path: Path, vocal_path: Path | None) -> None:
@@ -1878,7 +2518,7 @@ def replace_lrc_line_text(content: str, lyric_index: int, new_text: str) -> str:
     pattern = re.compile(r"^(\[\d{1,2}:\d{2}(?:[.:]\d{1,3})?\])(.*)$")
     for line in content.splitlines():
         match = pattern.match(line.strip())
-        if match and match.group(2).strip():
+        if match and match.group(2).strip() and not is_instruction_hallucination(match.group(2).strip()):
             timed_index += 1
             if timed_index == lyric_index:
                 output.append(f"{match.group(1)}{new_text}")
@@ -1900,9 +2540,12 @@ def replace_srt_line_text(content: str, lyric_index: int, new_text: str) -> str:
         time_line_index = 1 if parts[0].strip().isdigit() and len(parts) >= 2 else 0
         if time_line_index >= len(parts) or "-->" not in parts[time_line_index]:
             continue
+        text_start = time_line_index + 1
+        text = " ".join(part.strip() for part in parts[text_start:] if part.strip())
+        if text and is_instruction_hallucination(text):
+            continue
         timed_index += 1
         if timed_index == lyric_index:
-            text_start = time_line_index + 1
             blocks[block_index] = "\n".join(parts[:text_start] + [new_text])
             return "".join(blocks)
     raise IndexError("歌词行不存在，无法写入改词")
@@ -1910,6 +2553,79 @@ def replace_srt_line_text(content: str, lyric_index: int, new_text: str) -> str:
 
 def sanitize_filename(value: str) -> str:
     return "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in value).strip("_") or "song"
+
+
+def unique_child_path(parent: Path, name: str) -> Path:
+    candidate = parent / name
+    if not candidate.exists():
+        return candidate
+    stem = candidate.stem
+    suffix = candidate.suffix
+    index = 2
+    while True:
+        next_candidate = parent / f"{stem}_{index}{suffix}"
+        if not next_candidate.exists():
+            return next_candidate
+        index += 1
+
+
+def looks_like_wave_file(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            header = handle.read(12)
+    except OSError:
+        return False
+    return header.startswith(b"RIFF") and header[8:12] == b"WAVE"
+
+
+def repair_migrated_project_manifest(project_dir: Path) -> None:
+    manifest_path = project_dir / "project.json"
+    if not manifest_path.exists():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    changed = False
+    for key in ("project_source", "vocal_path", "instrumental_path", "lyrics_path", "active_vocal_path"):
+        value = manifest.get(key)
+        if not value:
+            continue
+        current = Path(str(value))
+        if current.exists():
+            continue
+        repaired = remap_migrated_project_path(project_dir, current)
+        if repaired is not None:
+            manifest[key] = str(repaired)
+            changed = True
+    if changed:
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def remap_migrated_project_path(project_dir: Path, old_path: Path) -> Path | None:
+    parts = old_path.parts
+    if project_dir.name in parts:
+        index = len(parts) - 1 - list(reversed(parts)).index(project_dir.name)
+        candidate = project_dir.joinpath(*parts[index + 1 :])
+        if candidate.exists():
+            return candidate
+    matches = list(project_dir.rglob(old_path.name))
+    return matches[0] if matches else None
+
+
+def unique_paths(paths: list[Path]) -> list[Path]:
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in paths:
+        try:
+            key = path.resolve()
+        except (OSError, RuntimeError):
+            key = path
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
 
 
 def song_key(song: SongAsset) -> tuple[str, str | None]:
