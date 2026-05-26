@@ -2303,12 +2303,16 @@ ApplicationWindow {
                     }
                 }
 
-                RowLayout {
+                Item {
                     Layout.fillWidth: true
-                    spacing: 14
+                    Layout.preferredHeight: 70
 
                     RowLayout {
-                        Layout.fillWidth: true
+                        id: leftBottomControls
+                        anchors.left: parent.left
+                        anchors.right: playbackControls.left
+                        anchors.rightMargin: 22
+                        anchors.verticalCenter: parent.verticalCenter
                         spacing: 16
 
                         BottomSlider {
@@ -2331,8 +2335,10 @@ ApplicationWindow {
                     }
 
                     RowLayout {
-                        Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
-                        Layout.preferredWidth: 214
+                        id: playbackControls
+                        width: 214
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.verticalCenter: parent.verticalCenter
                         spacing: 18
 
                         IconButton {
@@ -2394,7 +2400,11 @@ ApplicationWindow {
                     }
 
                     RowLayout {
-                        Layout.fillWidth: true
+                        id: rightBottomControls
+                        anchors.left: playbackControls.right
+                        anchors.leftMargin: 22
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
                         spacing: 16
 
                         BottomSlider {
