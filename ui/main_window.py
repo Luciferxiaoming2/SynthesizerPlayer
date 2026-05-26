@@ -712,8 +712,8 @@ class WorkbenchBridge(QObject):
         self._play_mode = str(config.get("play_mode") or self._play_mode)
         if self._play_mode not in {"list", "loop"}:
             self._play_mode = "list"
-        self._vocal_gain = max(0.0, number_value("vocal_gain", self._vocal_gain))
-        self._instrumental_gain = max(0.0, number_value("instrumental_gain", self._instrumental_gain))
+        self._vocal_gain = min(1.0, max(0.0, number_value("vocal_gain", self._vocal_gain)))
+        self._instrumental_gain = min(1.0, max(0.0, number_value("instrumental_gain", self._instrumental_gain)))
         self._tone_deaf_ratio = max(0.0, min(1.0, number_value("tone_deaf_ratio", self._tone_deaf_ratio)))
         self._lyrics_offset_ms = max(-10_000, min(10_000, number_value("lyrics_offset_ms", self._lyrics_offset_ms, int)))
 
@@ -916,7 +916,10 @@ class WorkbenchBridge(QObject):
 
     @pyqtProperty(bool, notify=lyricRewriteChanged)
     def aceApiReady(self) -> bool:
-        return self._is_ace_api_ready()
+        ready = self._is_ace_api_ready()
+        if ready and self._ace_startup_busy:
+            self._set_ace_startup_state(False, 100, "ACE 模型已启动，自动改词接口可用")
+        return ready
 
     @pyqtProperty(bool, notify=lyricRewriteChanged)
     def aceStartupBusy(self) -> bool:
@@ -1292,8 +1295,8 @@ class WorkbenchBridge(QObject):
 
     @pyqtSlot(float, float)
     def setTrackGains(self, vocal_gain: float, instrumental_gain: float) -> None:
-        self._vocal_gain = max(0.0, float(vocal_gain))
-        self._instrumental_gain = max(0.0, float(instrumental_gain))
+        self._vocal_gain = min(1.0, max(0.0, float(vocal_gain)))
+        self._instrumental_gain = min(1.0, max(0.0, float(instrumental_gain)))
         self._save_config()
         if self._playback is None:
             self.playbackChanged.emit()

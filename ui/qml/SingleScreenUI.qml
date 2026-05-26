@@ -960,7 +960,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 10
                     PrimaryButton {
-                        text: root.bridge && root.bridge.aceStartupBusy ? "模型启动中" : (root.bridge && root.bridge.aceApiReady ? "模型已启动" : "启动 ACE 模型")
+                        text: root.bridge && root.bridge.aceApiReady ? "模型已启动" : (root.bridge && root.bridge.aceStartupBusy ? "模型启动中" : "启动 ACE 模型")
                         enabled: root.bridge && !root.bridge.aceStartupBusy && !root.bridge.aceApiReady
                         Layout.fillWidth: true
                         onClicked: if (root.bridge) root.bridge.startAceModel()
@@ -1496,7 +1496,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 10
                     PrimaryButton {
-                        text: root.bridge && root.bridge.aceStartupBusy ? "模型启动中" : (root.bridge && root.bridge.aceApiReady ? "模型已启动" : "启动 ACE 模型")
+                        text: root.bridge && root.bridge.aceApiReady ? "模型已启动" : (root.bridge && root.bridge.aceStartupBusy ? "模型启动中" : "启动 ACE 模型")
                         enabled: root.bridge && !root.bridge.aceStartupBusy && !root.bridge.aceApiReady
                         Layout.fillWidth: true
                         onClicked: if (root.bridge) root.bridge.startAceModel()
@@ -2485,7 +2485,7 @@ ApplicationWindow {
                 id: vocalGain
                 visible: false
                 from: 0.0
-                to: 1.5
+                to: 1.0
                 value: 1.0
                 onValueChanged: if (root.bridge) root.bridge.setTrackGains(value, instGain.value)
             }
@@ -2494,7 +2494,7 @@ ApplicationWindow {
                 id: instGain
                 visible: false
                 from: 0.0
-                to: 1.5
+                to: 1.0
                 value: 0.8
                 onValueChanged: if (root.bridge) root.bridge.setTrackGains(vocalGain.value, value)
             }
