@@ -1452,13 +1452,80 @@ ApplicationWindow {
 
                 ComboBox {
                     Layout.fillWidth: true
-                    model: ["本机轻量改词唱（无需显卡）"]
+                    model: root.bridge && root.bridge.aceApiReady ? ["ACE-Step 真唱改写（自动调用）"] : (root.bridge && root.bridge.aceWebReady ? ["ACE-Step 已启动但未开自动接口", "本机轻量改词唱（备用）"] : ["本机轻量改词唱（备用）"])
                     currentIndex: 0
                     enabled: false
                 }
 
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    PrimaryButton {
+                        text: root.bridge && root.bridge.aceStartupBusy ? "模型启动中" : (root.bridge && root.bridge.aceApiReady ? "模型已启动" : "启动 ACE 模型")
+                        enabled: root.bridge && !root.bridge.aceStartupBusy && !root.bridge.aceApiReady
+                        Layout.fillWidth: true
+                        onClicked: if (root.bridge) root.bridge.startAceModel()
+                    }
+                    SecondaryButton {
+                        text: "停止模型"
+                        enabled: root.bridge && (root.bridge.aceStartupBusy || root.bridge.aceApiReady || root.bridge.aceWebReady)
+                        Layout.fillWidth: true
+                        onClicked: if (root.bridge) root.bridge.stopAceModel()
+                    }
+                }
+
+                Rectangle {
+                    visible: root.bridge && (root.bridge.aceStartupBusy || root.bridge.aceStartupProgress > 0)
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible ? 66 : 0
+                    radius: 10
+                    color: "#12131d"
+                    border.color: root.bridge && root.bridge.aceApiReady ? root.teal : "#303447"
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: 6
+                        Text {
+                            text: root.bridge ? root.bridge.aceStartupStatus : "ACE 模型状态"
+                            color: root.textMain
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                        ProgressBar {
+                            from: 0
+                            to: 100
+                            value: root.bridge ? root.bridge.aceStartupProgress : 0
+                            indeterminate: root.bridge && root.bridge.aceStartupBusy && root.bridge.aceStartupProgress < 25
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    SecondaryButton {
+                        text: root.bridge && root.bridge.aceWebReady ? "打开 ACE 工作台" : "检测 ACE"
+                        Layout.fillWidth: true
+                        onClicked: {
+                            if (!root.bridge)
+                                return
+                            if (root.bridge.aceWebReady)
+                                root.bridge.openAceWorkbench()
+                            else
+                                root.bridge.refreshAceWorkbenchStatus()
+                        }
+                    }
+                    SecondaryButton {
+                        text: "刷新状态"
+                        Layout.fillWidth: true
+                        onClicked: if (root.bridge) root.bridge.refreshAceWorkbenchStatus()
+                    }
+                }
+
                 Text {
-                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。当前会生成本机试听音频并替换选中句子；效果是轻量预览，不是云端大模型真唱。" : "改词唱后端：本机轻量改词唱（无需显卡）"
+                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。启用 ACE 自动接口后，点击下方按钮会直接把选中句子提交给 ACE 真唱改写；CPU 模式可能需要较长时间。" : "改词唱后端：本机轻量改词唱（备用）"
                     color: root.textDim
                     font.pixelSize: 12
                     wrapMode: Text.WordWrap
