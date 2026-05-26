@@ -858,7 +858,11 @@ ApplicationWindow {
                         text: "返回"
                         Layout.preferredWidth: 72
                         Layout.preferredHeight: 34
-                        onClicked: root.rewriteLyricIndex = -1
+                        onClicked: {
+                            root.rewriteLyricIndex = -1
+                            if (root.bridge)
+                                root.bridge.cancelLyricRewrite()
+                        }
                     }
                 }
 
@@ -1060,7 +1064,11 @@ ApplicationWindow {
                 SecondaryButton {
                     text: "取消修改"
                     Layout.fillWidth: true
-                    onClicked: root.rewriteLyricIndex = -1
+                    onClicked: {
+                        root.rewriteLyricIndex = -1
+                        if (root.bridge)
+                            root.bridge.cancelLyricRewrite()
+                    }
                 }
 
                 ColumnLayout {
@@ -1600,7 +1608,11 @@ ApplicationWindow {
                     SecondaryButton {
                         text: "取消修改"
                         Layout.fillWidth: true
-                        onClicked: root.rewriteLyricIndex = -1
+                        onClicked: {
+                            root.rewriteLyricIndex = -1
+                            if (root.bridge)
+                                root.bridge.cancelLyricRewrite()
+                        }
                     }
                     SecondaryButton {
                         text: "重置原词"
@@ -2293,28 +2305,33 @@ ApplicationWindow {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 18
+                    spacing: 14
 
-                    BottomSlider {
-                        title: "人声音量"
-                        valueText: Math.round((root.bridge && root.bridge.vocalMuted ? 0 : (root.bridge ? root.bridge.vocalGain : vocalGain.value)) * 100) + "%"
-                        slider: vocalGain
-                        muted: root.bridge ? root.bridge.vocalMuted : false
-                        muteClicked: function() { if (root.bridge) root.bridge.toggleVocalMute() }
+                    RowLayout {
                         Layout.fillWidth: true
-                    }
+                        spacing: 16
 
-                    BottomSlider {
-                        title: "伴奏音量"
-                        valueText: Math.round((root.bridge && root.bridge.instrumentalMuted ? 0 : (root.bridge ? root.bridge.instrumentalGain : instGain.value)) * 100) + "%"
-                        slider: instGain
-                        muted: root.bridge ? root.bridge.instrumentalMuted : false
-                        muteClicked: function() { if (root.bridge) root.bridge.toggleInstrumentalMute() }
-                        Layout.fillWidth: true
+                        BottomSlider {
+                            title: "人声音量"
+                            valueText: Math.round((root.bridge && root.bridge.vocalMuted ? 0 : (root.bridge ? root.bridge.vocalGain : vocalGain.value)) * 100) + "%"
+                            slider: vocalGain
+                            muted: root.bridge ? root.bridge.vocalMuted : false
+                            muteClicked: function() { if (root.bridge) root.bridge.toggleVocalMute() }
+                            Layout.fillWidth: true
+                        }
+
+                        BottomSlider {
+                            title: "伴奏音量"
+                            valueText: Math.round((root.bridge && root.bridge.instrumentalMuted ? 0 : (root.bridge ? root.bridge.instrumentalGain : instGain.value)) * 100) + "%"
+                            slider: instGain
+                            muted: root.bridge ? root.bridge.instrumentalMuted : false
+                            muteClicked: function() { if (root.bridge) root.bridge.toggleInstrumentalMute() }
+                            Layout.fillWidth: true
+                        }
                     }
 
                     RowLayout {
-                        Layout.alignment: Qt.AlignVCenter
+                        Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
                         Layout.preferredWidth: 214
                         spacing: 18
 
@@ -2376,95 +2393,94 @@ ApplicationWindow {
                         }
                     }
 
-                    BottomSlider {
-                        title: "主输出增益"
-                        valueText: masterSlider.value.toFixed(1) + "dB"
-                        slider: masterSlider
-                        muted: masterSlider.value <= masterSlider.from + 0.01
-                        muteClicked: function() { masterSlider.value = masterSlider.value <= masterSlider.from + 0.01 ? -3.0 : masterSlider.from }
+                    RowLayout {
                         Layout.fillWidth: true
-                    }
+                        spacing: 16
 
-                    Rectangle {
-                        Layout.preferredWidth: 1
-                        Layout.preferredHeight: 66
-                        color: "#1e212c"
-                    }
+                        BottomSlider {
+                            title: "主输出增益"
+                            valueText: masterSlider.value.toFixed(1) + "dB"
+                            slider: masterSlider
+                            muted: masterSlider.value <= masterSlider.from + 0.01
+                            muteClicked: function() { masterSlider.value = masterSlider.value <= masterSlider.from + 0.01 ? -3.0 : masterSlider.from }
+                            Layout.fillWidth: true
+                        }
 
-                    SecondaryButton {
-                        text: "VST 宿主"
-                        Layout.preferredWidth: 132
-                        onClicked: vstPluginDialog.open()
-                    }
+                        SecondaryButton {
+                            text: "VST 宿主"
+                            Layout.preferredWidth: 112
+                            onClicked: vstPluginDialog.open()
+                        }
 
-                    Rectangle {
-                        Layout.preferredWidth: 240
-                        Layout.preferredHeight: 58
-                        radius: 10
-                        color: "#151722"
-                        border.color: "#242839"
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 14
-                            anchors.rightMargin: 14
-                            anchors.topMargin: 8
-                            anchors.bottomMargin: 8
-                            spacing: 4
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Text {
-                                    text: "跑调程度 (F0)"
-                                    color: root.accent2
-                                    font.pixelSize: 13
-                                    font.bold: true
+                        Rectangle {
+                            Layout.preferredWidth: 220
+                            Layout.preferredHeight: 58
+                            radius: 10
+                            color: "#151722"
+                            border.color: "#242839"
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 14
+                                anchors.rightMargin: 14
+                                anchors.topMargin: 8
+                                anchors.bottomMargin: 8
+                                spacing: 4
+                                RowLayout {
                                     Layout.fillWidth: true
-                                }
-                                Text {
-                                    text: root.bridge ? (Math.round(root.bridge.toneDeafRatio * 100) + "%") : "0%"
-                                    color: root.accent2
-                                    font.pixelSize: 13
-                                    font.bold: true
-                                }
-                            }
-                            Slider {
-                                id: toneVisualSlider
-                                from: 0.0
-                                to: 1.0
-                                value: root.tonePreviewValue
-                                Layout.fillWidth: true
-                                background: SliderTrack { control: toneVisualSlider }
-                                handle: SliderHandle { control: toneVisualSlider }
-                                onMoved: {
-                                    root.tonePreviewValue = value
-                                    if (!toneApplyTimer.running)
-                                        toneApplyTimer.start()
-                                }
-                                onPressedChanged: {
-                                    if (!pressed) {
-                                        toneApplyTimer.stop()
-                                        toneSlider.value = root.tonePreviewValue
-                                        if (root.bridge)
-                                            root.bridge.setToneDeafRatio(root.tonePreviewValue)
+                                    Text {
+                                        text: "跑调程度 (F0)"
+                                        color: root.accent2
+                                        font.pixelSize: 13
+                                        font.bold: true
+                                        Layout.fillWidth: true
+                                    }
+                                    Text {
+                                        text: root.bridge ? (Math.round(root.bridge.toneDeafRatio * 100) + "%") : "0%"
+                                        color: root.accent2
+                                        font.pixelSize: 13
+                                        font.bold: true
                                     }
                                 }
-                            }
-                            RowLayout {
-                                visible: false
-                                Layout.fillWidth: true
-                                spacing: 8
-                                ProgressBar {
-                                    from: 0
-                                    to: 100
-                                    value: root.bridge ? root.bridge.toneDeafProgress : 0
-                                    indeterminate: root.bridge && root.bridge.toneDeafProgressIndeterminate
+                                Slider {
+                                    id: toneVisualSlider
+                                    from: 0.0
+                                    to: 1.0
+                                    value: root.tonePreviewValue
                                     Layout.fillWidth: true
+                                    background: SliderTrack { control: toneVisualSlider }
+                                    handle: SliderHandle { control: toneVisualSlider }
+                                    onMoved: {
+                                        root.tonePreviewValue = value
+                                        if (!toneApplyTimer.running)
+                                            toneApplyTimer.start()
+                                    }
+                                    onPressedChanged: {
+                                        if (!pressed) {
+                                            toneApplyTimer.stop()
+                                            toneSlider.value = root.tonePreviewValue
+                                            if (root.bridge)
+                                                root.bridge.setToneDeafRatio(root.tonePreviewValue)
+                                        }
+                                    }
                                 }
-                                Text {
-                                    text: root.bridge ? (root.bridge.toneDeafProgress + "%") : "0%"
-                                    color: root.textMuted
-                                    font.pixelSize: 11
-                                    Layout.preferredWidth: 36
-                                    horizontalAlignment: Text.AlignRight
+                                RowLayout {
+                                    visible: false
+                                    Layout.fillWidth: true
+                                    spacing: 8
+                                    ProgressBar {
+                                        from: 0
+                                        to: 100
+                                        value: root.bridge ? root.bridge.toneDeafProgress : 0
+                                        indeterminate: root.bridge && root.bridge.toneDeafProgressIndeterminate
+                                        Layout.fillWidth: true
+                                    }
+                                    Text {
+                                        text: root.bridge ? (root.bridge.toneDeafProgress + "%") : "0%"
+                                        color: root.textMuted
+                                        font.pixelSize: 11
+                                        Layout.preferredWidth: 36
+                                        horizontalAlignment: Text.AlignRight
+                                    }
                                 }
                             }
                         }

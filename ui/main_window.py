@@ -1750,6 +1750,18 @@ class WorkbenchBridge(QObject):
         return None
 
     @pyqtSlot()
+    def cancelLyricRewrite(self) -> None:
+        if self._lyric_rewrite_thread is not None and self._lyric_rewrite_thread.isRunning():
+            self._lyric_rewrite_thread.requestInterruption()
+            self._lyric_rewrite_thread.quit()
+            self._lyric_rewrite_thread.wait(1200)
+        self._lyric_rewrite_busy = False
+        self._lyric_rewrite_progress = 0
+        self._lyric_rewrite_status = "已取消本次改词修改"
+        self.lyricRewriteChanged.emit()
+        self._set_status("已取消改词修改")
+
+    @pyqtSlot()
     def reloadOriginalVocal(self) -> None:
         restored_lyrics = self._restore_original_lyrics()
         self._delete_lyric_rewrite_version_files()
