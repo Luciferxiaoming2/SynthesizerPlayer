@@ -2295,69 +2295,6 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 18
 
-                    IconButton {
-                        label: "■"
-                        tip: "停止"
-                        onClicked: if (root.bridge && root.acceptUiAction("playback", 180)) root.bridge.stop()
-                    }
-
-                    Rectangle {
-                        Layout.preferredWidth: 60
-                        Layout.preferredHeight: 60
-                        radius: 16
-                        color: root.accent
-                        Item {
-                            width: 24
-                            height: 24
-                            anchors.centerIn: parent
-                            visible: root.bridge && root.bridge.isPlaying
-                            Rectangle {
-                                width: 6
-                                height: 22
-                                radius: 1
-                                anchors.left: parent.left
-                                anchors.verticalCenter: parent.verticalCenter
-                                color: "white"
-                            }
-                            Rectangle {
-                                width: 6
-                                height: 22
-                                radius: 1
-                                anchors.right: parent.right
-                                anchors.verticalCenter: parent.verticalCenter
-                                color: "white"
-                            }
-                        }
-                        Text {
-                            anchors.centerIn: parent
-                            visible: !(root.bridge && root.bridge.isPlaying)
-                            text: "▶"
-                            color: "white"
-                            font.pixelSize: 34
-                            font.bold: true
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            enabled: !(root.bridge && (root.bridge.importBusy || root.bridge.toneDeafBusy))
-                            onClicked: {
-                                if (root.bridge && root.acceptUiAction("playback", 180))
-                                    root.bridge.isPlaying ? root.bridge.pause() : root.bridge.startAudioOutput()
-                            }
-                        }
-                    }
-
-                    IconButton {
-                        label: root.bridge && root.bridge.playModeLabel === "单曲循环" ? "↻" : "♫"
-                        tip: root.bridge ? root.bridge.playModeLabel : "播放模式"
-                        onClicked: if (root.bridge && root.acceptUiAction("playMode", 240)) root.bridge.cyclePlayMode()
-                    }
-
-                    Rectangle {
-                        Layout.preferredWidth: 1
-                        Layout.preferredHeight: 66
-                        color: "#1e212c"
-                    }
-
                     BottomSlider {
                         title: "人声音量"
                         valueText: Math.round((root.bridge && root.bridge.vocalMuted ? 0 : (root.bridge ? root.bridge.vocalGain : vocalGain.value)) * 100) + "%"
@@ -2374,6 +2311,69 @@ ApplicationWindow {
                         muted: root.bridge ? root.bridge.instrumentalMuted : false
                         muteClicked: function() { if (root.bridge) root.bridge.toggleInstrumentalMute() }
                         Layout.fillWidth: true
+                    }
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignVCenter
+                        Layout.preferredWidth: 214
+                        spacing: 18
+
+                        IconButton {
+                            label: "■"
+                            tip: "停止"
+                            onClicked: if (root.bridge && root.acceptUiAction("playback", 180)) root.bridge.stop()
+                        }
+
+                        Rectangle {
+                            Layout.preferredWidth: 60
+                            Layout.preferredHeight: 60
+                            radius: 16
+                            color: root.accent
+                            Item {
+                                width: 24
+                                height: 24
+                                anchors.centerIn: parent
+                                visible: root.bridge && root.bridge.isPlaying
+                                Rectangle {
+                                    width: 6
+                                    height: 22
+                                    radius: 1
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: "white"
+                                }
+                                Rectangle {
+                                    width: 6
+                                    height: 22
+                                    radius: 1
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: "white"
+                                }
+                            }
+                            Text {
+                                anchors.centerIn: parent
+                                visible: !(root.bridge && root.bridge.isPlaying)
+                                text: "▶"
+                                color: "white"
+                                font.pixelSize: 34
+                                font.bold: true
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: !(root.bridge && (root.bridge.importBusy || root.bridge.toneDeafBusy))
+                                onClicked: {
+                                    if (root.bridge && root.acceptUiAction("playback", 180))
+                                        root.bridge.isPlaying ? root.bridge.pause() : root.bridge.startAudioOutput()
+                                }
+                            }
+                        }
+
+                        IconButton {
+                            label: root.bridge && root.bridge.playModeLabel === "单曲循环" ? "↻" : "♫"
+                            tip: root.bridge ? root.bridge.playModeLabel : "播放模式"
+                            onClicked: if (root.bridge && root.acceptUiAction("playMode", 240)) root.bridge.cyclePlayMode()
+                        }
                     }
 
                     BottomSlider {

@@ -3319,7 +3319,7 @@ def run_ace_repaint_task(
             f"{base_url}/release_task",
             data=form_data,
             files={"src_audio": (source_audio_path.name, audio_file, "audio/wav")},
-            timeout=60,
+            timeout=(15, 60 * 20),
         )
     response.raise_for_status()
     payload = response.json()
@@ -3335,7 +3335,7 @@ def run_ace_repaint_task(
         query = requests.post(
             f"{base_url}/query_result",
             json={"task_id_list": [task_id]},
-            timeout=30,
+            timeout=(10, 180),
         )
         query.raise_for_status()
         query_payload = query.json()
@@ -3357,7 +3357,7 @@ def run_ace_repaint_task(
             if audio_url.startswith("/"):
                 audio_url = f"{base_url}{audio_url}"
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            with requests.get(audio_url, stream=True, timeout=120) as download:
+            with requests.get(audio_url, stream=True, timeout=(10, 300)) as download:
                 download.raise_for_status()
                 with output_path.open("wb") as out_file:
                     for chunk in download.iter_content(chunk_size=1024 * 256):
@@ -3760,6 +3760,11 @@ def format_lyric_rewrite_error(message: str) -> str:
         return "改词唱失败：ACE 外部改唱工具执行失败，请检查模型环境后重新启动 ACE。"
     if "No module named" in message:
         return "改词唱失败：当前 ACE 改唱运行环境缺少组件，请使用完整安装包或重新部署 ACE。"
+    if "Read timed out" in message or "ConnectionError" in message or "HTTPConnectionPool" in message:
+        return (
+            "改词唱失败：ACE 本地接口响应超时。CPU 模式首次生成可能非常慢，"
+            "请确认右侧显示“模型已启动”后重试；如果长时间无响应，请停止模型后重新启动。"
+        )
     return f"改词唱失败：{short_error_detail(message)}"
 
 
