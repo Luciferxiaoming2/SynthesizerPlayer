@@ -1680,7 +1680,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                     }
                     PrimaryButton {
-                        text: root.bridge && root.bridge.lyricRewriteBusy ? "正在智能补唱" : (root.bridge && root.bridge.aceApiReady ? "启动智能补唱" : "请先启动 ACE 模型")
+                        text: root.bridge && root.bridge.lyricRewriteBusy ? "正在智能补唱" : "启动智能补唱"
                         enabled: root.rewriteLyricIndex >= 0 && root.bridge && root.bridge.aceApiReady && !(root.bridge && root.bridge.lyricRewriteBusy)
                         Layout.fillWidth: true
                         Layout.preferredHeight: 44

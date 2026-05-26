@@ -164,6 +164,19 @@ def detect_cuda_gpu() -> tuple[bool, str]:
     return False, ""
 
 
+def ace_runtime_dir_for_root(root: Path) -> Path | None:
+    candidates = [
+        root / "plugins" / "runtime" / "ACE-Step-1.5",
+        root / "_internal" / "plugins" / "runtime" / "ACE-Step-1.5",
+    ]
+    if len(root.parents) >= 2:
+        candidates.append(root.parents[1] / "plugins" / "runtime" / "ACE-Step-1.5")
+    for candidate in candidates:
+        if (candidate / "pyproject.toml").exists() and (candidate / "acestep").exists():
+            return candidate
+    return None
+
+
 class ImportSongWorker(QObject):
     progress = pyqtSignal(int, str)
     finished = pyqtSignal(object, str, str)
@@ -204,6 +217,45 @@ class SongScanWorker(QObject):
             self.finished.emit(scan_song_library(self._songs_root))
         except Exception:
             self.failed.emit(traceback.format_exc(limit=1).strip())
+
+
+class AceStartupPreflightWorker(QObject):
+    finished = pyqtSignal(object)
+
+    def __init__(self, root: Path, port: int = 7860) -> None:
+        super().__init__()
+        self._root = root
+        self._port = port
+
+    @pyqtSlot()
+    def run(self) -> None:
+        payload: dict[str, object] = {
+            "api_ready": False,
+            "runtime_dir": None,
+            "uv_path": None,
+            "killed": [],
+            "error": "",
+        }
+        if is_ace_api_ready(timeout=0.35):
+            payload["api_ready"] = True
+            self.finished.emit(payload)
+            return
+
+        runtime_dir = ace_runtime_dir_for_root(self._root)
+        if runtime_dir is None:
+            payload["error"] = "未找到 ACE-Step-1.5 运行目录，请先放到 plugins/runtime/ACE-Step-1.5。"
+            self.finished.emit(payload)
+            return
+        uv_path = shutil.which("uv")
+        if uv_path is None:
+            payload["error"] = "未找到 uv 命令，无法自动启动 ACE。请先确认 uv 已加入 PATH。"
+            self.finished.emit(payload)
+            return
+
+        payload["runtime_dir"] = str(runtime_dir)
+        payload["uv_path"] = uv_path
+        payload["killed"] = kill_processes_on_port(self._port)
+        self.finished.emit(payload)
 
 
 class LyricsGenerationWorker(QObject):
@@ -541,6 +593,9 @@ class WorkbenchBridge(QObject):
         self._ace_api_last_check = 0.0
         self._ace_api_reachable = False
         self._ace_process: QProcess | None = None
+        self._ace_preflight_thread: QThread | None = None
+        self._ace_preflight_worker: AceStartupPreflightWorker | None = None
+        self._ace_startup_cancelled = False
         self._ace_startup_busy = False
         self._ace_startup_progress = 0
         self._ace_startup_status = "ACE 模型未由本应用启动"
@@ -2030,40 +2085,66 @@ class WorkbenchBridge(QObject):
         if self._ace_startup_busy:
             self._set_status("ACE 模型正在启动中，请稍等。")
             return
-        if self._is_ace_api_ready(force=True):
+        self._ace_startup_cancelled = False
+        self._set_ace_startup_state(True, 5, "正在后台检查 ACE 环境和 7860 端口")
+        self._set_status("正在准备启动 ACE 模型，界面可以继续操作。")
+        self._ace_preflight_thread = QThread(self)
+        self._ace_preflight_worker = AceStartupPreflightWorker(self._root)
+        self._ace_preflight_worker.moveToThread(self._ace_preflight_thread)
+        self._ace_preflight_thread.started.connect(self._ace_preflight_worker.run)
+        self._ace_preflight_worker.finished.connect(self._handle_ace_preflight_finished)
+        self._ace_preflight_worker.finished.connect(self._ace_preflight_thread.quit)
+        self._ace_preflight_thread.finished.connect(self._ace_preflight_worker.deleteLater)
+        self._ace_preflight_thread.finished.connect(self._cleanup_ace_preflight_thread)
+        self._ace_preflight_thread.start()
+
+    @pyqtSlot(object)
+    def _handle_ace_preflight_finished(self, payload: object) -> None:
+        if self._ace_startup_cancelled:
+            return
+        data = payload if isinstance(payload, dict) else {}
+        if data.get("api_ready"):
+            self._ace_api_reachable = True
             self._set_ace_startup_state(False, 100, "ACE 模型已启动，自动改词接口可用")
             self._set_status("ACE 模型已启动，可以直接调用真唱改写。")
             return
-
-        runtime_dir = self._ace_runtime_dir()
-        if runtime_dir is None:
-            self._set_status("未找到 ACE-Step-1.5 运行目录，请先放到 plugins/runtime/ACE-Step-1.5。")
+        error = str(data.get("error") or "")
+        if error:
+            self._set_ace_startup_state(False, 0, error)
+            self._set_status(error)
             return
-        uv_path = shutil.which("uv")
-        if uv_path is None:
-            self._set_status("未找到 uv 命令，无法自动启动 ACE。请先确认 uv 已加入 PATH。")
+        runtime_dir_text = str(data.get("runtime_dir") or "")
+        uv_path = str(data.get("uv_path") or "")
+        if not runtime_dir_text or not uv_path:
+            self._set_ace_startup_state(False, 0, "ACE 启动失败：运行环境不完整。")
+            self._set_status(self._ace_startup_status)
             return
-
-        self._set_ace_startup_state(True, 5, "正在检查 7860 端口")
-        killed = kill_processes_on_port(7860)
+        killed = [str(pid) for pid in data.get("killed", []) if str(pid)]
         if killed:
-            self._set_ace_startup_state(True, 12, f"已释放 7860 端口：{', '.join(str(pid) for pid in killed)}")
+            self._set_ace_startup_state(True, 14, f"已释放 7860 端口：{', '.join(killed)}")
         else:
-            self._set_ace_startup_state(True, 12, "7860 端口可用，正在启动 ACE")
+            self._set_ace_startup_state(True, 14, "7860 端口可用，正在启动 ACE")
+        self._start_ace_process(Path(runtime_dir_text), uv_path)
 
+    def _cleanup_ace_preflight_thread(self) -> None:
+        self._ace_preflight_thread = None
+        self._ace_preflight_worker = None
+
+    def _start_ace_process(self, runtime_dir: Path, uv_path: str) -> None:
         process = QProcess(self)
         process.setWorkingDirectory(str(runtime_dir))
         process.setProgram(uv_path)
         process.setArguments(["run", "acestep", "--enable-api", "--server-name", "127.0.0.1", "--port", "7860"])
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        process.started.connect(self._handle_ace_process_started)
         process.readyReadStandardOutput.connect(self._handle_ace_process_output)
         process.errorOccurred.connect(self._handle_ace_process_error)
         process.finished.connect(self._handle_ace_process_finished)
         self._ace_process = process
         process.start()
-        if not process.waitForStarted(3000):
-            self._set_ace_startup_state(False, 0, "ACE 启动失败：进程未能启动")
-            self._ace_process = None
+
+    def _handle_ace_process_started(self) -> None:
+        if self._ace_startup_cancelled:
             return
         self._ace_startup_poll_timer.start()
         self._set_ace_startup_state(True, 18, "ACE 进程已启动，正在加载模型")
@@ -2071,7 +2152,11 @@ class WorkbenchBridge(QObject):
 
     @pyqtSlot()
     def stopAceModel(self) -> None:
+        self._ace_startup_cancelled = True
         stopped: list[int] = []
+        if self._ace_preflight_thread is not None and self._ace_preflight_thread.isRunning():
+            self._ace_preflight_thread.quit()
+            self._ace_preflight_thread.wait(1500)
         if self._ace_process is not None and self._ace_process.state() != QProcess.ProcessState.NotRunning:
             pid = int(self._ace_process.processId())
             self._ace_process.terminate()
@@ -2095,6 +2180,9 @@ class WorkbenchBridge(QObject):
         if self._song_scan_thread is not None and self._song_scan_thread.isRunning():
             self._song_scan_thread.quit()
             self._song_scan_thread.wait(2000)
+        if self._ace_preflight_thread is not None and self._ace_preflight_thread.isRunning():
+            self._ace_preflight_thread.quit()
+            self._ace_preflight_thread.wait(2000)
         self.stopAceModel()
 
     @pyqtSlot()
@@ -2110,16 +2198,7 @@ class WorkbenchBridge(QObject):
             self._set_status("未检测到 ACE-Step 工作台。请先在 ACE-Step-1.5 目录执行 uv run acestep。")
 
     def _ace_runtime_dir(self) -> Path | None:
-        candidates = [
-            self._root / "plugins" / "runtime" / "ACE-Step-1.5",
-            self._root / "_internal" / "plugins" / "runtime" / "ACE-Step-1.5",
-        ]
-        if len(self._root.parents) >= 2:
-            candidates.append(self._root.parents[1] / "plugins" / "runtime" / "ACE-Step-1.5")
-        for candidate in candidates:
-            if (candidate / "pyproject.toml").exists() and (candidate / "acestep").exists():
-                return candidate
-        return None
+        return ace_runtime_dir_for_root(self._root)
 
     def _set_ace_startup_state(self, busy: bool, progress: int, status: str) -> None:
         self._ace_startup_busy = busy
@@ -3094,10 +3173,12 @@ def fit_generated_audio_segment(
 ACE_API_BASE_URL = "http://127.0.0.1:7860"
 
 
-def is_ace_api_ready(base_url: str = ACE_API_BASE_URL) -> bool:
-    def request_ok(url: str, *, timeout: float = 1.5, allowed_codes: set[int] | None = None) -> bool:
+def is_ace_api_ready(base_url: str = ACE_API_BASE_URL, timeout: float = 0.45) -> bool:
+    def request_ok(
+        url: str, *, timeout_seconds: float = timeout, allowed_codes: set[int] | None = None
+    ) -> bool:
         try:
-            with urllib.request.urlopen(url, timeout=timeout) as response:
+            with urllib.request.urlopen(url, timeout=timeout_seconds) as response:
                 return response.status in allowed_codes if allowed_codes is not None else 200 <= response.status < 400
         except urllib.error.HTTPError as exc:
             return exc.code in allowed_codes if allowed_codes is not None else 200 <= exc.code < 400
@@ -3105,7 +3186,7 @@ def is_ace_api_ready(base_url: str = ACE_API_BASE_URL) -> bool:
             return False
 
     try:
-        with urllib.request.urlopen(f"{base_url}/health", timeout=1.5) as response:
+        with urllib.request.urlopen(f"{base_url}/health", timeout=timeout) as response:
             if 200 <= response.status < 400:
                 return True
     except urllib.error.HTTPError as exc:
@@ -3115,7 +3196,7 @@ def is_ace_api_ready(base_url: str = ACE_API_BASE_URL) -> bool:
         pass
 
     try:
-        with urllib.request.urlopen(f"{base_url}/openapi.json", timeout=1.5) as response:
+        with urllib.request.urlopen(f"{base_url}/openapi.json", timeout=timeout) as response:
             if not (200 <= response.status < 400):
                 return False
             payload = response.read(1024 * 1024).decode("utf-8", errors="ignore")
@@ -3123,7 +3204,7 @@ def is_ace_api_ready(base_url: str = ACE_API_BASE_URL) -> bool:
     except urllib.error.HTTPError as exc:
         return False
     except (OSError, urllib.error.URLError, TimeoutError):
-        return request_ok(f"{base_url}/query_result", timeout=1.0, allowed_codes={400, 401, 405, 422})
+        return request_ok(f"{base_url}/query_result", allowed_codes={400, 401, 405, 422})
 
 
 def process_ids_on_port(port: int) -> list[int]:
