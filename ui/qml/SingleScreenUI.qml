@@ -557,8 +557,7 @@ ApplicationWindow {
                 instGain.value = root.bridge.instrumentalGain
         }
         function onLyricRewriteChanged() {
-            if (root.bridge && !root.bridge.lyricRewriteBusy && root.bridge.lyricRewriteProgress >= 100)
-                root.rewriteLyricIndex = -1
+            // Keep the selected lyric panel open after generation so users can reset or run again.
         }
     }
 
@@ -1350,7 +1349,10 @@ ApplicationWindow {
             ScrollView {
                 id: rewriteScroll
                 visible: root.rewriteLyricIndex >= 0
-                anchors.fill: parent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: rewriteFooter.top
                 anchors.margins: 18
                 clip: true
                 ScrollBar.vertical.policy: ScrollBar.AsNeeded
@@ -1567,13 +1569,6 @@ ApplicationWindow {
                     }
                 }
 
-                PrimaryButton {
-                    text: root.bridge && root.bridge.lyricRewriteBusy ? "正在智能改唱" : (root.bridge && root.bridge.aceApiReady ? "调用 ACE 真唱并修补" : "请先启动 ACE 模型")
-                    enabled: root.rewriteLyricIndex >= 0 && root.bridge && root.bridge.aceApiReady && !(root.bridge && root.bridge.lyricRewriteBusy)
-                    Layout.fillWidth: true
-                    onClicked: if (root.bridge) root.bridge.generateLyricRewrite(root.rewriteLyricIndex, rightPaneRewriteText.text)
-                }
-
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 10
@@ -1635,6 +1630,36 @@ ApplicationWindow {
                     Item {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 6
+                    }
+                }
+            }
+
+            Rectangle {
+                id: rewriteFooter
+                visible: root.rewriteLyricIndex >= 0
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: visible ? 92 : 0
+                color: "#0c0e15"
+                border.color: "#24283a"
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 14
+                    spacing: 8
+                    Text {
+                        text: root.bridge && root.bridge.aceApiReady ? "ACE 已就绪，点击后会生成当前句子的真唱补唱版本。" : "请先启动 ACE 模型并等待自动接口就绪。"
+                        color: root.textDim
+                        font.pixelSize: 12
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+                    PrimaryButton {
+                        text: root.bridge && root.bridge.lyricRewriteBusy ? "正在智能补唱" : (root.bridge && root.bridge.aceApiReady ? "启动智能补唱" : "请先启动 ACE 模型")
+                        enabled: root.rewriteLyricIndex >= 0 && root.bridge && root.bridge.aceApiReady && !(root.bridge && root.bridge.lyricRewriteBusy)
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 44
+                        onClicked: if (root.bridge) root.bridge.generateLyricRewrite(root.rewriteLyricIndex, rightPaneRewriteText.text)
                     }
                 }
             }

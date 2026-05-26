@@ -91,6 +91,22 @@ class ImportSongWorker(QObject):
             self.failed.emit(traceback.format_exc(limit=1).strip())
 
 
+class SongScanWorker(QObject):
+    finished = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, songs_root: Path) -> None:
+        super().__init__()
+        self._songs_root = songs_root
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            self.finished.emit(scan_song_library(self._songs_root))
+        except Exception:
+            self.failed.emit(traceback.format_exc(limit=1).strip())
+
+
 class LyricsGenerationWorker(QObject):
     progress = pyqtSignal(int, str)
     finished = pyqtSignal(str)
@@ -460,15 +476,21 @@ class WorkbenchBridge(QObject):
         self._last_alignment_latency_ms: float | None = None
         self._last_alignment_passed: bool | None = None
         self._play_mode = "list"
+        self._song_scan_thread: QThread | None = None
+        self._song_scan_worker: SongScanWorker | None = None
         self._load_user_settings()
         self._save_config()
         self._tone_deaf_cache = ToneDeafBufferCache()
         self._playback_timer = QTimer(self)
         self._playback_timer.setInterval(100)
         self._playback_timer.timeout.connect(self.advancePlayback)
-        self._songs = scan_song_library(self._songs_root)
-        self._load_recent_song_if_needed()
-        self._load_first_song_if_needed()
+        self._songs: list[SongAsset] = []
+        if QCoreApplication.instance() is None:
+            self._songs = scan_song_library(self._songs_root)
+            self._load_recent_song_if_needed()
+            self._load_first_song_if_needed()
+        else:
+            QTimer.singleShot(0, self.scanSongs)
 
     def _migrate_legacy_project_outputs(self) -> None:
         legacy_projects = self._root / "projects"
@@ -1786,15 +1808,56 @@ class WorkbenchBridge(QObject):
 
     @pyqtSlot()
     def scanSongs(self) -> None:
-        try:
-            self._songs = scan_song_library(self._songs_root)
-            self.songsChanged.emit()
-            self._load_first_song_if_needed()
-            self._set_status(f"已扫描到 {len(self._songs)} 首歌曲：{self._songs_root}")
-        except Exception:
-            self._songs = []
-            self.songsChanged.emit()
-            self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
+        if QCoreApplication.instance() is None:
+            try:
+                self._songs = scan_song_library(self._songs_root)
+                self.songsChanged.emit()
+                self._load_recent_song_if_needed()
+                self._load_first_song_if_needed()
+                self._set_status(f"已扫描到 {len(self._songs)} 首歌曲：{self._songs_root}")
+            except Exception:
+                self._songs = []
+                self.songsChanged.emit()
+                self._set_status(format_user_error(traceback.format_exc(limit=1).strip()))
+            return
+        if self._song_scan_thread is not None and self._song_scan_thread.isRunning():
+            self._set_status("正在后台刷新歌曲库，请稍等。")
+            return
+        self._song_scan_thread = QThread(self)
+        self._song_scan_worker = SongScanWorker(self._songs_root)
+        self._song_scan_worker.moveToThread(self._song_scan_thread)
+        self._song_scan_thread.started.connect(self._song_scan_worker.run)
+        self._song_scan_worker.finished.connect(self._handle_song_scan_finished)
+        self._song_scan_worker.failed.connect(self._handle_song_scan_failed)
+        self._song_scan_worker.finished.connect(self._song_scan_thread.quit)
+        self._song_scan_worker.failed.connect(self._song_scan_thread.quit)
+        self._song_scan_thread.finished.connect(self._song_scan_worker.deleteLater)
+        self._song_scan_thread.finished.connect(self._cleanup_song_scan_thread)
+        self._song_scan_thread.start()
+
+    @pyqtSlot(object)
+    def _handle_song_scan_finished(self, songs: object) -> None:
+        current_key = self._current_song_key
+        self._songs = list(songs) if isinstance(songs, list) else []
+        if current_key:
+            for index, song in enumerate(self._songs):
+                if song_key(song) == current_key:
+                    self._current_song_index = index
+                    break
+        self.songsChanged.emit()
+        self._load_recent_song_if_needed()
+        self._load_first_song_if_needed()
+        self._set_status(f"已后台扫描到 {len(self._songs)} 首歌曲：{self._songs_root}")
+
+    @pyqtSlot(str)
+    def _handle_song_scan_failed(self, message: str) -> None:
+        self._songs = []
+        self.songsChanged.emit()
+        self._set_status(format_user_error(message))
+
+    def _cleanup_song_scan_thread(self) -> None:
+        self._song_scan_thread = None
+        self._song_scan_worker = None
 
     @pyqtSlot()
     def openSongsRootFolder(self) -> None:
@@ -1895,6 +1958,9 @@ class WorkbenchBridge(QObject):
         self._save_recent_state()
         self._playback_timer.stop()
         self._stop_audio_output(reset_engine=False)
+        if self._song_scan_thread is not None and self._song_scan_thread.isRunning():
+            self._song_scan_thread.quit()
+            self._song_scan_thread.wait(2000)
         self.stopAceModel()
 
     @pyqtSlot()
@@ -2632,16 +2698,18 @@ class WorkbenchBridge(QObject):
         self._save_recent_state()
 
     def _refresh_songs_after_import(self, asset: SongAsset) -> None:
-        imported_key = song_key(asset)
-        self._songs = scan_song_library(self._songs_root)
-        for index, song in enumerate(self._songs):
-            if song_key(song) == imported_key or song.root == asset.root:
-                self._current_song_index = index
-                self._current_song_key = song_key(song)
-                self.songsChanged.emit()
-                self._save_recent_state()
-                return
+        if QCoreApplication.instance() is None:
+            imported_key = song_key(asset)
+            self._songs = scan_song_library(self._songs_root)
+            for index, song in enumerate(self._songs):
+                if song_key(song) == imported_key or song.root == asset.root:
+                    self._current_song_index = index
+                    self._current_song_key = song_key(song)
+                    self.songsChanged.emit()
+                    self._save_recent_state()
+                    return
         self._upsert_song(asset)
+        self.scanSongs()
 
     def _build_separator(self, backend: str):
         if backend == "demucs":
@@ -3521,6 +3589,7 @@ def main() -> None:
         raise SystemExit(1)
     if os.environ.get("AUDIO_FORGE_UI_SMOKE") == "1":
         print("Audio Forge UI smoke loaded")
+        bridge.shutdown()
         return
     raise SystemExit(app.exec())
 
