@@ -11,27 +11,75 @@ ApplicationWindow {
     minimumHeight: 620
     visible: true
     title: "Synthesizer Player"
-    color: "#07080d"
+    color: root.bg
 
     property var bridge: audioWorkbench
     property string fileTarget: "vocal"
-    property color bg: "#07080d"
-    property color surface: "#0b0c12"
-    property color panel: "#10121b"
-    property color panelSoft: "#151722"
-    property color panelLine: "#242635"
-    property color accent: "#e12a83"
-    property color accent2: "#ff55ad"
-    property color teal: "#10d5a6"
-    property color textMain: "#f8f5fb"
-    property color textMuted: "#9aa0ad"
-    property color textDim: "#687080"
+    property int currentThemeIndex: root.bridge ? root.bridge.themeIndex : 0
+    property var theme: themePalette(currentThemeIndex)
+    property color bg: theme.bg
+    property color surface: theme.surface
+    property color panel: theme.panel
+    property color panelSoft: theme.panelSoft
+    property color panelLine: theme.panelLine
+    property color accent: theme.accent
+    property color accent2: theme.accent2
+    property color teal: theme.teal
+    property color textMain: theme.textMain
+    property color textMuted: theme.textMuted
+    property color textDim: theme.textDim
     property real designWidth: 1480
     property real designHeight: 920
     property real uiScale: Math.max(0.62, Math.min(1.35, Math.min(width / designWidth, height / designHeight)))
     property real tonePreviewValue: 0.0
     property int rewriteLyricIndex: -1
     property var actionCooldowns: ({})
+
+    function themePalette(index) {
+        if (index === 1) {
+            return {
+                bg: "#f6f7fb",
+                surface: "#ffffff",
+                panel: "#eef1f7",
+                panelSoft: "#e7ebf3",
+                panelLine: "#cbd2df",
+                accent: "#cf2f7f",
+                accent2: "#b51f6c",
+                teal: "#0d9b7f",
+                textMain: "#182033",
+                textMuted: "#5e687a",
+                textDim: "#7c8798"
+            }
+        }
+        if (index === 2) {
+            return {
+                bg: "#f1f8f0",
+                surface: "#fbfff8",
+                panel: "#e6f2e4",
+                panelSoft: "#dbeedd",
+                panelLine: "#b7d4bc",
+                accent: "#2f9f72",
+                accent2: "#167d5c",
+                teal: "#18a999",
+                textMain: "#173323",
+                textMuted: "#526b58",
+                textDim: "#738573"
+            }
+        }
+        return {
+            bg: "#07080d",
+            surface: "#0b0c12",
+            panel: "#10121b",
+            panelSoft: "#151722",
+            panelLine: "#242635",
+            accent: "#e12a83",
+            accent2: "#ff55ad",
+            teal: "#10d5a6",
+            textMain: "#f8f5fb",
+            textMuted: "#9aa0ad",
+            textDim: "#687080"
+        }
+    }
 
     function modelIndex(model, value) {
         if (!model)
@@ -573,9 +621,9 @@ ApplicationWindow {
         padding: 0
 
         background: Rectangle {
-            color: "#0d0f17"
+            color: root.surface
             radius: 10
-            border.color: "#2a2d3c"
+            border.color: root.panelLine
         }
 
         ColumnLayout {
@@ -610,6 +658,24 @@ ApplicationWindow {
                     id: settingsContent
                     width: parent.width
                     spacing: 12
+
+                    SettingsLabel { text: "外观主题" }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "主题"
+                            color: root.textMuted
+                            font.pixelSize: 13
+                            Layout.preferredWidth: 86
+                        }
+                        ComboBox {
+                            id: themePicker
+                            model: root.bridge ? root.bridge.themeNames : ["星夜霓虹", "晨光白昼", "薄荷微风"]
+                            currentIndex: root.currentThemeIndex
+                            Layout.fillWidth: true
+                            onActivated: if (root.bridge) root.bridge.setThemeIndex(index)
+                        }
+                    }
 
                     SettingsLabel { text: "歌曲库位置" }
                     SecondaryButton {
@@ -756,8 +822,8 @@ ApplicationWindow {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            color: "#0b0c12"
-            border.color: "#171923"
+            color: root.surface
+            border.color: root.panelLine
 
             RowLayout {
                 anchors.fill: parent
@@ -1132,8 +1198,8 @@ ApplicationWindow {
             anchors.left: parent.left
             anchors.top: topBar.bottom
             anchors.bottom: bottomBar.top
-            color: "#0d0f16"
-            border.color: "#1e212c"
+            color: root.surface
+            border.color: root.panelLine
 
             ColumnLayout {
                 anchors.fill: parent
@@ -1352,8 +1418,8 @@ ApplicationWindow {
             anchors.top: topBar.bottom
             anchors.right: parent.right
             anchors.bottom: bottomBar.top
-            color: "#0c0e15"
-            border.color: "#1e212c"
+            color: root.surface
+            border.color: root.panelLine
 
             ScrollView {
                 id: rewriteScroll
@@ -1954,7 +2020,7 @@ ApplicationWindow {
             anchors.right: rightPane.left
             anchors.top: topBar.bottom
             anchors.bottom: bottomBar.top
-            color: "#07080d"
+            color: root.bg
 
             ColumnLayout {
                 anchors.fill: parent
@@ -2241,8 +2307,8 @@ ApplicationWindow {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            color: "#0b0c12"
-            border.color: "#1b1d27"
+            color: root.surface
+            border.color: root.panelLine
 
             ColumnLayout {
                 anchors.fill: parent
@@ -2528,8 +2594,8 @@ ApplicationWindow {
         }
         background: Rectangle {
             radius: 10
-            color: parent.down ? "#242633" : "#14161f"
-            border.color: "#252936"
+            color: parent.down ? root.panelLine : root.panel
+            border.color: root.panelLine
         }
     }
 
@@ -2546,7 +2612,7 @@ ApplicationWindow {
         }
         background: Rectangle {
             radius: 8
-            color: parent.enabled ? (parent.down ? "#bf1d6d" : root.accent) : "#33313a"
+            color: parent.enabled ? (parent.down ? root.accent2 : root.accent) : root.panelLine
         }
     }
 
@@ -2563,8 +2629,8 @@ ApplicationWindow {
         }
         background: Rectangle {
             radius: 7
-            color: parent.down ? "#1c1f2b" : "#141720"
-            border.color: "#272b39"
+            color: parent.down ? root.panelLine : root.panel
+            border.color: root.panelLine
         }
     }
 
@@ -2584,8 +2650,8 @@ ApplicationWindow {
         }
         background: Rectangle {
             radius: 8
-            color: parent.active ? "#2a0f23" : "#151721"
-            border.color: parent.active ? "#6d214b" : "#272b39"
+            color: parent.active ? root.panelSoft : root.panel
+            border.color: parent.active ? root.accent : root.panelLine
         }
     }
 
@@ -2604,12 +2670,12 @@ ApplicationWindow {
         width: control.availableWidth
         height: 6
         radius: 3
-        color: "#3a3d42"
+        color: root.panelLine
         Rectangle {
             width: parent.width * (control.position || 0)
             height: parent.height
             radius: parent.radius
-            color: "#f5f5f5"
+            color: root.textMain
         }
     }
 
@@ -2621,7 +2687,7 @@ ApplicationWindow {
         height: 28
         radius: 14
         color: "#ffffff"
-        border.color: "#d7d7d7"
+        border.color: root.panelLine
         border.width: 2
     }
 
@@ -2657,8 +2723,8 @@ ApplicationWindow {
                     Layout.preferredWidth: 34
                     Layout.preferredHeight: 34
                     radius: 6
-                    color: muted ? "#2a0f23" : "#161925"
-                    border.color: "#222638"
+                    color: muted ? root.panelSoft : root.panel
+                    border.color: root.panelLine
                     Text {
                         anchors.centerIn: parent
                         text: muted ? "已静" : "静"

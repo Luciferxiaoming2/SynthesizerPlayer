@@ -541,6 +541,7 @@ class WorkbenchBridge(QObject):
     lyricsGenerationChanged = pyqtSignal()
     lyricRewriteChanged = pyqtSignal()
     toneDeafProcessingChanged = pyqtSignal()
+    themeChanged = pyqtSignal()
 
     def __init__(self, root: Path) -> None:
         super().__init__()
@@ -636,6 +637,7 @@ class WorkbenchBridge(QObject):
         self._last_alignment_latency_ms: float | None = None
         self._last_alignment_passed: bool | None = None
         self._play_mode = "list"
+        self._theme_index = 0
         self._song_scan_thread: QThread | None = None
         self._song_scan_worker: SongScanWorker | None = None
         self._load_user_settings()
@@ -716,6 +718,7 @@ class WorkbenchBridge(QObject):
         self._instrumental_gain = min(1.0, max(0.0, number_value("instrumental_gain", self._instrumental_gain)))
         self._tone_deaf_ratio = max(0.0, min(1.0, number_value("tone_deaf_ratio", self._tone_deaf_ratio)))
         self._lyrics_offset_ms = max(-10_000, min(10_000, number_value("lyrics_offset_ms", self._lyrics_offset_ms, int)))
+        self._theme_index = max(0, min(2, number_value("theme_index", self._theme_index, int)))
 
     def _save_config(self) -> None:
         data = {
@@ -726,6 +729,7 @@ class WorkbenchBridge(QObject):
             "instrumental_gain": self._instrumental_gain,
             "tone_deaf_ratio": self._tone_deaf_ratio,
             "lyrics_offset_ms": self._lyrics_offset_ms,
+            "theme_index": self._theme_index,
             "ace_base_url": ACE_API_BASE_URL,
         }
         try:
@@ -793,6 +797,24 @@ class WorkbenchBridge(QObject):
     @pyqtProperty(int, notify=devicesChanged)
     def selectedAudioDeviceIndex(self) -> int:
         return self._selected_audio_device_index
+
+    @pyqtProperty("QStringList", constant=True)
+    def themeNames(self) -> list[str]:
+        return ["星夜霓虹", "晨光白昼", "薄荷微风"]
+
+    @pyqtProperty(int, notify=themeChanged)
+    def themeIndex(self) -> int:
+        return self._theme_index
+
+    @pyqtSlot(int)
+    def setThemeIndex(self, index: int) -> None:
+        next_index = max(0, min(len(self.themeNames) - 1, int(index)))
+        if next_index == self._theme_index:
+            return
+        self._theme_index = next_index
+        self._save_config()
+        self.themeChanged.emit()
+        self._set_status(f"已切换主题：{self.themeNames[self._theme_index]}")
 
     @pyqtProperty("QStringList", constant=True)
     def separatorBackends(self) -> list[str]:
