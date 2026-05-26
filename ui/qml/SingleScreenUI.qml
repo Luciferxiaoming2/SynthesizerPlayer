@@ -201,7 +201,7 @@ ApplicationWindow {
 
         background: Rectangle {
             radius: 8
-            color: "#17101a"
+            color: root.panel
             border.color: root.accent
             opacity: 0.98
         }
@@ -228,8 +228,8 @@ ApplicationWindow {
 
         background: Rectangle {
             radius: 10
-            color: "#10121b"
-            border.color: "#34384a"
+            color: root.panel
+            border.color: root.panelLine
         }
 
         ColumnLayout {
@@ -272,8 +272,8 @@ ApplicationWindow {
                         width: rewriteVersionListUnused.width
                         height: 34
                         radius: 7
-                        color: "#151722"
-                        border.color: "#303447"
+                        color: root.panelSoft
+                        border.color: root.panelLine
                         RowLayout {
                             anchors.fill: parent
                             anchors.leftMargin: 10
@@ -336,8 +336,8 @@ ApplicationWindow {
 
         background: Rectangle {
             radius: 10
-            color: "#10121b"
-            border.color: "#ff4fa3"
+            color: root.panel
+            border.color: root.accent2
         }
 
         ColumnLayout {
@@ -399,8 +399,8 @@ ApplicationWindow {
 
         background: Rectangle {
             radius: 10
-            color: "#10121b"
-            border.color: "#34384a"
+            color: root.panel
+            border.color: root.panelLine
         }
 
         ColumnLayout {
@@ -441,8 +441,8 @@ ApplicationWindow {
                 color: root.textMain
                 background: Rectangle {
                     radius: 8
-                    color: "#151722"
-                    border.color: "#303447"
+                    color: root.panelSoft
+                    border.color: root.panelLine
                 }
             }
             ColumnLayout {
@@ -492,8 +492,8 @@ ApplicationWindow {
                         width: rewriteVersionList.width
                         height: 34
                         radius: 7
-                        color: "#151722"
-                        border.color: "#303447"
+                        color: root.panelSoft
+                        border.color: root.panelLine
                         RowLayout {
                             anchors.fill: parent
                             anchors.leftMargin: 10
@@ -728,14 +728,14 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.preferredHeight: hardwareHintText.implicitHeight + 22
                         radius: 8
-                        color: root.bridge && root.bridge.lowSpecDevice ? "#22191c" : "#12171a"
-                        border.color: root.bridge && root.bridge.lowSpecDevice ? "#8a5a31" : "#2d4a46"
+                        color: root.bridge && root.bridge.lowSpecDevice ? root.panelSoft : root.panel
+                        border.color: root.bridge && root.bridge.lowSpecDevice ? "#b97a35" : root.panelLine
                         Text {
                             id: hardwareHintText
                             anchors.fill: parent
                             anchors.margins: 11
                             text: root.bridge ? ("本机画像：" + root.bridge.hardwareSummary + "\n" + root.bridge.localPerformanceWarning) : ""
-                            color: root.bridge && root.bridge.lowSpecDevice ? "#f0c68a" : root.textMuted
+                            color: root.bridge && root.bridge.lowSpecDevice ? "#c58b3a" : root.textMuted
                             font.pixelSize: 12
                             wrapMode: Text.WordWrap
                         }
@@ -851,8 +851,8 @@ ApplicationWindow {
                     Layout.preferredWidth: 356
                     Layout.preferredHeight: 36
                     radius: 18
-                    color: "#151723"
-                    border.color: "#272b3b"
+                    color: root.panel
+                    border.color: root.panelLine
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 16
@@ -866,7 +866,7 @@ ApplicationWindow {
                         }
                         Text {
                             text: root.bridge && root.bridge.audioDeviceNames.length > 0 ? ("输出设备: " + root.bridge.audioDeviceNames[Math.max(0, root.bridge.selectedAudioDeviceIndex)]) : "输出设备: 系统默认"
-                            color: "#c8c2ce"
+                            color: root.textMain
                             font.pixelSize: 16
                             elide: Text.ElideRight
                             Layout.fillWidth: true
@@ -911,7 +911,7 @@ ApplicationWindow {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 1
-                    color: "#2a1b2a"
+                    color: root.panelLine
                 }
 
                 Text {
@@ -932,8 +932,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 58
                     radius: 8
-                    color: "#121520"
-                    border.color: "#3b4054"
+                    color: root.panel
+                    border.color: root.panelLine
                     Text {
                         anchors.fill: parent
                         anchors.margins: 12
@@ -975,7 +975,7 @@ ApplicationWindow {
                     font.bold: true
                     background: Rectangle {
                         radius: 10
-                        color: "#12131d"
+                        color: root.panel
                         border.color: root.accent
                     }
                 }
@@ -1024,8 +1024,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: visible ? 66 : 0
                     radius: 10
-                    color: "#12131d"
-                    border.color: root.bridge && root.bridge.aceApiReady ? root.teal : "#303447"
+                    color: root.panel
+                    border.color: root.bridge && root.bridge.aceApiReady ? root.teal : root.panelLine
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 10
@@ -1074,8 +1074,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: visible ? 72 : 0
                     radius: 10
-                    color: "#17121d"
-                    border.color: "#5d2450"
+                    color: root.panel
+                    border.color: root.accent
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 12
@@ -1140,8 +1140,8 @@ ApplicationWindow {
                             width: ListView.view.width
                             height: 34
                             radius: 6
-                            color: "#151722"
-                            border.color: "#303447"
+                            color: root.panelSoft
+                            border.color: root.panelLine
                             Text {
                                 anchors.left: parent.left
                                 anchors.right: deleteRewriteVersionButton.left
@@ -1163,8 +1163,8 @@ ApplicationWindow {
                                 anchors.rightMargin: 6
                                 anchors.verticalCenter: parent.verticalCenter
                                 radius: 6
-                                color: "#20151d"
-                                border.color: "#4a2c42"
+                                color: root.panel
+                                border.color: root.panelLine
                                 Text {
                                     anchors.centerIn: parent
                                     text: "删"
@@ -1210,8 +1210,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 45
                     radius: 9
-                    color: "#151822"
-                    border.color: "#282b38"
+                    color: root.panel
+                    border.color: root.panelLine
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 15
@@ -1250,8 +1250,8 @@ ApplicationWindow {
                         width: songList.width
                         height: 66
                         radius: 9
-                        color: ListView.isCurrentItem ? "#2a0e21" : "#0f1118"
-                        border.color: ListView.isCurrentItem ? "#6d214b" : "transparent"
+                        color: ListView.isCurrentItem ? root.panelSoft : "transparent"
+                        border.color: ListView.isCurrentItem ? root.accent : "transparent"
 
                         RowLayout {
                             anchors.fill: parent
@@ -1262,7 +1262,7 @@ ApplicationWindow {
                                 Layout.preferredWidth: 40
                                 Layout.preferredHeight: 40
                                 radius: 5
-                                color: ListView.isCurrentItem ? "#5b1741" : "#181c28"
+                                color: ListView.isCurrentItem ? root.accent : root.panel
                                 Text {
                                     anchors.centerIn: parent
                                     text: "♪"
@@ -1318,7 +1318,7 @@ ApplicationWindow {
 
                 Text {
                     text: root.bridge ? root.bridge.heavyTaskWarning : ""
-                    color: root.bridge && root.bridge.lowSpecDevice ? "#f0c68a" : root.textMuted
+                    color: root.bridge && root.bridge.lowSpecDevice ? "#c58b3a" : root.textMuted
                     font.pixelSize: 12
                     wrapMode: Text.WordWrap
                     maximumLineCount: 3
@@ -1459,7 +1459,7 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 1
-                        color: "#2a1b2a"
+                        color: root.panelLine
                     }
 
                 Text {
@@ -1480,8 +1480,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 58
                     radius: 8
-                    color: "#121520"
-                    border.color: "#3b4054"
+                    color: root.panel
+                    border.color: root.panelLine
                     Text {
                         anchors.fill: parent
                         anchors.margins: 12
@@ -1523,7 +1523,7 @@ ApplicationWindow {
                     font.bold: true
                     background: Rectangle {
                         radius: 10
-                        color: "#12131d"
+                        color: root.panel
                         border.color: root.accent
                     }
                 }
@@ -1564,8 +1564,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: visible ? 66 : 0
                     radius: 10
-                    color: "#12131d"
-                    border.color: root.bridge && root.bridge.aceApiReady ? root.teal : "#303447"
+                    color: root.panel
+                    border.color: root.bridge && root.bridge.aceApiReady ? root.teal : root.panelLine
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 10
@@ -1622,8 +1622,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: visible ? 72 : 0
                     radius: 10
-                    color: "#17121d"
-                    border.color: "#5d2450"
+                    color: root.panel
+                    border.color: root.accent
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 12
@@ -1686,8 +1686,8 @@ ApplicationWindow {
                             width: ListView.view.width
                             height: 32
                             radius: 6
-                            color: "#151722"
-                            border.color: "#303447"
+                            color: root.panelSoft
+                            border.color: root.panelLine
                             Text {
                                 anchors.fill: parent
                                 anchors.leftMargin: 10
@@ -1720,8 +1720,8 @@ ApplicationWindow {
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 height: visible ? 92 : 0
-                color: "#0c0e15"
-                border.color: "#24283a"
+                color: root.surface
+                border.color: root.panelLine
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 14
@@ -1769,8 +1769,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: root.bridge && root.bridge.toneDeafBusy ? 220 : 194
                     radius: 14
-                    color: "#10131d"
-                    border.color: "#252a39"
+                    color: root.panel
+                    border.color: root.panelLine
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 16
@@ -1809,7 +1809,7 @@ ApplicationWindow {
                                     x: f0Bars.barCount <= 1 ? 0 : index * (f0Bars.width - width) / (f0Bars.barCount - 1)
                                     anchors.verticalCenter: parent.verticalCenter
                                     radius: 1.75
-                                    color: index % 5 === 0 ? "#ff7fc0" : "#f269ad"
+                                    color: index % 5 === 0 ? root.accent2 : root.accent
                                     opacity: 0.76 + Math.min(0.22, modelData * 0.22)
 
                                     Behavior on height {
@@ -1867,8 +1867,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 40
                     radius: 8
-                    color: "#151722"
-                    border.color: "#262938"
+                    color: root.panel
+                    border.color: root.panelLine
                     RowLayout {
                         anchors.fill: parent
                         anchors.margins: 4
@@ -1913,8 +1913,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 132
                     radius: 12
-                    color: "#11141f"
-                    border.color: "#272b3a"
+                    color: root.panel
+                    border.color: root.panelLine
                     RowLayout {
                         anchors.top: parent.top
                         anchors.left: parent.left
@@ -2061,8 +2061,8 @@ ApplicationWindow {
                         Layout.preferredWidth: 210
                         Layout.preferredHeight: 30
                         radius: 15
-                        color: "#241020"
-                        border.color: "#69254a"
+                        color: root.panelSoft
+                        border.color: root.accent
                         Text {
                             anchors.centerIn: parent
                             text: songList.currentIndex >= 0 && root.bridge && root.bridge.songNames.length > 0 ? (root.bridge.songNames[songList.currentIndex] + " - LRC 同步中") : "LRC 同步中"
@@ -2078,7 +2078,7 @@ ApplicationWindow {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 1
-                    color: "#151720"
+                    color: root.panelLine
                 }
 
                 Rectangle {
@@ -2086,8 +2086,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.preferredHeight: visible ? 54 : 0
                     radius: 10
-                    color: "#111520"
-                    border.color: "#293146"
+                    color: root.panel
+                    border.color: root.panelLine
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 16
@@ -2147,14 +2147,14 @@ ApplicationWindow {
                             height: active || rewriteSelected ? 70 : (sung ? 44 : 58)
                             x: active || rewriteSelected ? (lyricList.width - width) / 2 : 40
                             radius: active || rewriteSelected ? 16 : 12
-                            color: rewriteSelected ? "#2d0b20" : (active ? "#2a0a1d" : "transparent")
-                            border.color: rewriteSelected ? root.accent2 : (active ? "#6a2149" : "transparent")
+                            color: rewriteSelected ? root.panelSoft : (active ? root.panelSoft : "transparent")
+                            border.color: rewriteSelected ? root.accent2 : (active ? root.accent : "transparent")
                             border.width: rewriteSelected ? 2 : 1
                             opacity: sung && !active ? 0.68 : 1.0
                             SequentialAnimation on border.color {
                                 running: rewriteSelected
                                 loops: Animation.Infinite
-                                ColorAnimation { to: "#ff8bcf"; duration: 700 }
+                                ColorAnimation { to: root.accent; duration: 700 }
                                 ColorAnimation { to: root.accent2; duration: 700 }
                             }
 
@@ -2179,7 +2179,7 @@ ApplicationWindow {
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: root.lyricProgressHtml(modelData, root.bridge ? root.bridge.currentLyricProgress : 0, active, sung)
                                         textFormat: active ? Text.RichText : Text.PlainText
-                                        color: active ? root.accent2 : (sung ? "#948696" : root.textMain)
+                                        color: active ? root.accent2 : (sung ? root.textMuted : root.textMain)
                                         font.pixelSize: active ? 25 : (sung ? 15 : 20)
                                         font.bold: active || sung
                                         elide: active ? Text.ElideNone : Text.ElideRight
@@ -2195,13 +2195,13 @@ ApplicationWindow {
                                     anchors.right: parent.right
                                     anchors.verticalCenter: parent.verticalCenter
                                     radius: 15
-                                    color: "#171a24"
-                                    border.color: active ? "#3d325f" : "#262a38"
+                                    color: root.panel
+                                    border.color: active ? root.accent : root.panelLine
                                     visible: active
                                     Text {
                                         anchors.centerIn: parent
                                         text: root.bridge && root.bridge.lyricTimeLabels.length > index ? root.bridge.lyricTimeLabels[index] : "--:--"
-                                        color: active ? "#d9d0ff" : root.accent2
+                                        color: active ? root.textMain : root.accent2
                                         font.pixelSize: 13
                                         font.bold: true
                                         font.family: "Consolas"
@@ -2240,8 +2240,8 @@ ApplicationWindow {
                     Layout.preferredWidth: Math.min(parent.width * 0.92, 760)
                     Layout.preferredHeight: 126
                     radius: 14
-                    color: "#0f1119"
-                    border.color: "#1f2433"
+                    color: root.panel
+                    border.color: root.panelLine
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 16
@@ -2468,8 +2468,8 @@ ApplicationWindow {
                             Layout.preferredWidth: 220
                             Layout.preferredHeight: 58
                             radius: 10
-                            color: "#151722"
-                            border.color: "#242839"
+                            color: root.panel
+                            border.color: root.panelLine
                             ColumnLayout {
                                 anchors.fill: parent
                                 anchors.leftMargin: 14
