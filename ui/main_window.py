@@ -1,6 +1,7 @@
 """PyQt6/QML application shell for the Audio Forge MVP."""
 
 from pathlib import Path
+import ctypes
 import gc
 import importlib.util
 import json
@@ -13,6 +14,7 @@ import time
 import traceback
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 
 import soundfile as sf
 from PyQt6.QtCore import QCoreApplication, QObject, QProcess, QThread, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
@@ -63,6 +65,103 @@ from core_engine.transcription import (
 )
 from harness.eval_harness.audio_latency_test import evaluate_latency
 from harness.cli_harness.generate_mock_audio import build_mock_stems
+
+
+@dataclass(frozen=True)
+class HardwareProfile:
+    cpu_threads: int
+    total_memory_gb: float | None
+    available_memory_gb: float | None
+    has_cuda_gpu: bool
+    gpu_name: str
+
+    @property
+    def whisper_threads(self) -> int:
+        return max(1, min(4, self.cpu_threads // 2 or 1))
+
+    @property
+    def is_low_spec(self) -> bool:
+        memory_low = self.total_memory_gb is not None and self.total_memory_gb < 11.5
+        return memory_low or self.cpu_threads <= 4 or not self.has_cuda_gpu
+
+    @property
+    def summary(self) -> str:
+        memory = "内存未知" if self.total_memory_gb is None else f"内存 {self.total_memory_gb:.1f}GB"
+        gpu = self.gpu_name if self.has_cuda_gpu else "未检测到 NVIDIA/CUDA"
+        return f"CPU {self.cpu_threads} 线程，{memory}，{gpu}"
+
+    @property
+    def warning(self) -> str:
+        if not self.is_low_spec:
+            return "本机配置适合本地音频处理。"
+        hints = []
+        if not self.has_cuda_gpu:
+            hints.append("未检测到独立 CUDA 显卡，AI 改词唱和真实分离会明显变慢")
+        if self.total_memory_gb is not None and self.total_memory_gb < 11.5:
+            hints.append("内存低于 12GB，长歌分离/改词唱建议关闭其它大型软件")
+        if self.cpu_threads <= 4:
+            hints.append("CPU 线程较少，歌词识别会自动限速以保持界面响应")
+        return "；".join(hints) + "。"
+
+
+def detect_hardware_profile() -> HardwareProfile:
+    cpu_threads = max(1, os.cpu_count() or 1)
+    total_memory_gb, available_memory_gb = windows_memory_status_gb()
+    has_cuda_gpu, gpu_name = detect_cuda_gpu()
+    return HardwareProfile(
+        cpu_threads=cpu_threads,
+        total_memory_gb=total_memory_gb,
+        available_memory_gb=available_memory_gb,
+        has_cuda_gpu=has_cuda_gpu,
+        gpu_name=gpu_name,
+    )
+
+
+def windows_memory_status_gb() -> tuple[float | None, float | None]:
+    if sys.platform != "win32":
+        return None, None
+
+    class MemoryStatusEx(ctypes.Structure):
+        _fields_ = [
+            ("dwLength", ctypes.c_ulong),
+            ("dwMemoryLoad", ctypes.c_ulong),
+            ("ullTotalPhys", ctypes.c_ulonglong),
+            ("ullAvailPhys", ctypes.c_ulonglong),
+            ("ullTotalPageFile", ctypes.c_ulonglong),
+            ("ullAvailPageFile", ctypes.c_ulonglong),
+            ("ullTotalVirtual", ctypes.c_ulonglong),
+            ("ullAvailVirtual", ctypes.c_ulonglong),
+            ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+        ]
+
+    status = MemoryStatusEx()
+    status.dwLength = ctypes.sizeof(MemoryStatusEx)
+    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        return None, None
+    scale = 1024**3
+    return status.ullTotalPhys / scale, status.ullAvailPhys / scale
+
+
+def detect_cuda_gpu() -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name",
+                "--format=csv,noheader",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False, ""
+    names = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if result.returncode == 0 and names:
+        return True, names[0]
+    return False, ""
 
 
 class ImportSongWorker(QObject):
@@ -398,6 +497,7 @@ class WorkbenchBridge(QObject):
         self._user_data_root.mkdir(parents=True, exist_ok=True)
         self._logs_root.mkdir(parents=True, exist_ok=True)
         self._cache_root.mkdir(parents=True, exist_ok=True)
+        self._hardware = detect_hardware_profile()
         self._projects_root = root / "save"
         self._projects_root.mkdir(parents=True, exist_ok=True)
         self._songs_root = self._projects_root
@@ -663,12 +763,36 @@ class WorkbenchBridge(QObject):
         if self._lyrics_backend == "faster-whisper":
             if is_module_available("faster_whisper"):
                 if self._local_lyrics_model_path() is not None:
-                    return "智能识别已就绪：会自动生成中文或英文歌词"
+                    return (
+                        "智能识别已就绪：会自动生成中文或英文歌词，"
+                        f"CPU 限制为 {self._hardware.whisper_threads} 线程以保持界面响应"
+                    )
                 return "智能识别组件已安装，模型文件未随包放入；请联系交付人员补齐模型包"
             return "智能识别组件未打包，请使用包含歌词识别的完整版本"
         if self._lyrics_backend == "preview":
             return "占位提示：不会识别内容，只提示用户导入歌词或安装识别依赖"
         return "不生成歌词：适合纯音乐，歌词区会显示暂无歌词"
+
+    @pyqtProperty(str, notify=importOptionsChanged)
+    def hardwareSummary(self) -> str:
+        return self._hardware.summary
+
+    @pyqtProperty(str, notify=importOptionsChanged)
+    def localPerformanceWarning(self) -> str:
+        return self._hardware.warning
+
+    @pyqtProperty(bool, notify=importOptionsChanged)
+    def lowSpecDevice(self) -> bool:
+        return self._hardware.is_low_spec
+
+    @pyqtProperty(str, notify=importOptionsChanged)
+    def heavyTaskWarning(self) -> str:
+        if self._separator_backend == "demucs":
+            return (
+                "真实分离会完全在本机运行。"
+                + ("当前设备可能耗时较长，请保持电源连接。" if self._hardware.is_low_spec else "")
+            )
+        return "快速预览不会真正分离人声，适合低配设备快速试用。"
 
     @pyqtProperty(bool, notify=importBusyChanged)
     def importBusy(self) -> bool:
@@ -1278,6 +1402,16 @@ class WorkbenchBridge(QObject):
         self._separator_backend = separator_backend
         self._lyrics_backend = lyrics_backend
         self.importOptionsChanged.emit()
+        if separator_backend == "demucs" and self._hardware.available_memory_gb is not None:
+            if self._hardware.available_memory_gb < 0.5:
+                self._set_status(
+                    "导入已取消：当前可用内存低于 500MB。请关闭其它大型软件后再使用真实分离。"
+                )
+                return
+            if self._hardware.available_memory_gb < 2.0:
+                self._set_status(
+                    "当前可用内存偏低，真实分离可能很慢或失败；建议关闭其它大型软件。"
+                )
         self._set_import_busy(True)
         self._set_import_progress(
             5,
@@ -2741,7 +2875,12 @@ class WorkbenchBridge(QObject):
                 raise RuntimeError("智能歌词识别组件未打包，无法生成歌词。")
             model_size = str(self._local_lyrics_model_path() or "small")
             return FasterWhisperLyricsTranscriber(
-                FasterWhisperConfig(model_size=model_size, device="cpu", compute_type="int8")
+                FasterWhisperConfig(
+                    model_size=model_size,
+                    device="cpu",
+                    compute_type="int8",
+                    cpu_threads=self._hardware.whisper_threads,
+                )
             )
         if backend == "none":
             return None

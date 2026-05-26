@@ -658,6 +658,22 @@ ApplicationWindow {
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: hardwareHintText.implicitHeight + 22
+                        radius: 8
+                        color: root.bridge && root.bridge.lowSpecDevice ? "#22191c" : "#12171a"
+                        border.color: root.bridge && root.bridge.lowSpecDevice ? "#8a5a31" : "#2d4a46"
+                        Text {
+                            id: hardwareHintText
+                            anchors.fill: parent
+                            anchors.margins: 11
+                            text: root.bridge ? ("本机画像：" + root.bridge.hardwareSummary + "\n" + root.bridge.localPerformanceWarning) : ""
+                            color: root.bridge && root.bridge.lowSpecDevice ? "#f0c68a" : root.textMuted
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                        }
+                    }
                     RowLayout {
                         Layout.fillWidth: true
                         SecondaryButton {
@@ -933,7 +949,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。点击下方按钮会直接把选中句子提交给 ACE 真唱改写；CPU 模式可能需要较长时间。" : "改词唱后端：ACE-Step 真唱改写"
+                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。点击下方按钮会直接把选中句子提交给 ACE 真唱改写；CPU 模式可能需要较长时间。\n" + root.bridge.localPerformanceWarning : "改词唱后端：ACE-Step 真唱改写"
                     color: root.textDim
                     font.pixelSize: 12
                     wrapMode: Text.WordWrap
@@ -1250,6 +1266,15 @@ ApplicationWindow {
                     onClicked: songImportDialog.open()
                 }
 
+                Text {
+                    text: root.bridge ? root.bridge.heavyTaskWarning : ""
+                    color: root.bridge && root.bridge.lowSpecDevice ? "#f0c68a" : root.textMuted
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: 3
+                    Layout.fillWidth: true
+                }
+
                 ColumnLayout {
                     visible: root.bridge && root.bridge.importBusy
                     Layout.fillWidth: true
@@ -1535,7 +1560,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。点击下方按钮会直接把选中句子提交给 ACE 真唱改写；CPU 模式可能需要较长时间。" : "改词唱后端：ACE-Step 真唱改写"
+                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。点击下方按钮会直接把选中句子提交给 ACE 真唱改写；CPU 模式可能需要较长时间。\n" + root.bridge.localPerformanceWarning : "改词唱后端：ACE-Step 真唱改写"
                     color: root.textDim
                     font.pixelSize: 12
                     wrapMode: Text.WordWrap

@@ -72,6 +72,7 @@ class FasterWhisperConfig:
     model_size: str = "small"
     device: str = "cpu"
     compute_type: str = "int8"
+    cpu_threads: int = 4
     language: str | None = None
     beam_size: int = 8
     best_of: int = 5
@@ -95,13 +96,19 @@ class FasterWhisperLyricsTranscriber(LyricsTranscriber):
             ) from exc
 
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_key = (self._config.model_size, self._config.device, self._config.compute_type)
+        cache_key = (
+            self._config.model_size,
+            self._config.device,
+            self._config.compute_type,
+            self._config.cpu_threads,
+        )
         model = self._model_cache.get(cache_key)
         if model is None:
             model = WhisperModel(
                 self._config.model_size,
                 device=self._config.device,
                 compute_type=self._config.compute_type,
+                cpu_threads=self._config.cpu_threads,
             )
             self._model_cache[cache_key] = model
         segments, _info = model.transcribe(
