@@ -8,6 +8,7 @@ from ui.main_window import (
     WorkbenchBridge,
     extract_ace_audio_url,
     fit_generated_audio_segment,
+    is_ace_api_ready,
     process_ids_on_port,
     format_lyric_rewrite_error,
     format_user_error,
@@ -49,6 +50,10 @@ def test_workbench_bridge_reports_ace_web_status(tmp_path, monkeypatch):
     def fake_urlopen(url, timeout):
         if url == "http://127.0.0.1:7860/health":
             raise OSError("api disabled")
+        if url == "http://127.0.0.1:7860/openapi.json":
+            raise OSError("api disabled")
+        if url == "http://127.0.0.1:7860/query_result":
+            raise OSError("api disabled")
         assert url == "http://127.0.0.1:7860/config"
         assert timeout <= 0.5
         return FakeResponse()
@@ -58,6 +63,33 @@ def test_workbench_bridge_reports_ace_web_status(tmp_path, monkeypatch):
 
     assert bridge.aceWebReady is True
     assert "ACE-Step Web 工作台已运行" in bridge.aceWebStatus
+
+
+def test_ace_api_ready_accepts_openapi_routes_when_health_is_missing(monkeypatch):
+    class FakeResponse:
+        status = 200
+
+        def __init__(self, body: str = ""):
+            self._body = body.encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size=-1):
+            return self._body
+
+    def fake_urlopen(url, timeout):
+        if url.endswith("/health"):
+            raise OSError("health not ready")
+        assert url.endswith("/openapi.json")
+        return FakeResponse('{"paths":{"/release_task":{},"/query_result":{}}}')
+
+    monkeypatch.setattr("ui.main_window.urllib.request.urlopen", fake_urlopen)
+
+    assert is_ace_api_ready() is True
 
 
 def test_extract_ace_audio_url_from_nested_result_payload():
@@ -110,6 +142,21 @@ def test_ace_startup_poll_marks_model_ready(tmp_path, monkeypatch):
     assert bridge.aceStartupProgress == 100
     assert bridge.aceApiReady is True
     assert "ACE" in bridge.aceStartupStatus
+
+
+def test_ace_startup_poll_finishes_when_workbench_is_ready(tmp_path, monkeypatch):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge._set_ace_startup_state(True, 88, "ACE 网页已启动，正在等待自动接口")
+
+    monkeypatch.setattr(bridge, "_is_ace_api_ready", lambda *, force=False: False)
+    monkeypatch.setattr(bridge, "_is_ace_web_ready", lambda *, force=False: True)
+
+    bridge._poll_ace_startup_status()
+
+    assert bridge.aceStartupBusy is False
+    assert bridge.aceStartupProgress == 100
+    assert bridge.aceApiReady is False
+    assert "工作台已启动" in bridge.aceStartupStatus
 
 
 def test_local_tts_rewrite_segment_pads_instead_of_extreme_time_stretch():
@@ -256,6 +303,24 @@ def test_workbench_bridge_recovers_rewrite_vocal_from_loaded_song(tmp_path):
     assert bridge.lyricRewritePreviewPath.endswith("vocal_rewrite_002.wav")
     assert Path(bridge.lyricRewritePreviewPath).exists()
     assert Path(original_path).exists()
+
+
+def test_desktop_lyric_rewrite_requires_ace_api(tmp_path, monkeypatch):
+    class FakeApplication:
+        @staticmethod
+        def instance():
+            return object()
+
+    bridge = WorkbenchBridge(tmp_path)
+    bridge.generateMockAudio()
+    monkeypatch.setattr("ui.main_window.QCoreApplication", FakeApplication)
+    monkeypatch.setattr(bridge, "_is_ace_api_ready", lambda *, force=False: False)
+    monkeypatch.setattr(bridge, "_is_ace_web_ready", lambda *, force=False: False)
+
+    bridge.generateLyricRewrite(1, "只走 ACE")
+
+    assert bridge.lyricRewritePreviewPath == ""
+    assert "ACE" in bridge.status
 
 
 def test_lyric_rewrite_file_not_found_error_uses_rewrite_context():

@@ -417,7 +417,7 @@ ApplicationWindow {
                 }
             }
             Text {
-                text: "当前使用本机轻量改词唱生成试听音频，无需显卡；真实唱声大模型后续可作为增强后端接入。"
+                text: "当前改词唱只使用 ACE-Step 真唱模型；请先启动模型并等待自动接口就绪。"
                 color: root.textDim
                 font.pixelSize: 12
                 wrapMode: Text.WordWrap
@@ -928,13 +928,13 @@ ApplicationWindow {
 
                 ComboBox {
                     Layout.fillWidth: true
-                    model: root.bridge && root.bridge.aceApiReady ? ["ACE-Step 真唱改写（自动调用）"] : (root.bridge && root.bridge.aceWebReady ? ["ACE-Step 已启动但未开自动接口", "本机轻量改词唱（备用）"] : ["本机轻量改词唱（备用）"])
+                    model: root.bridge && root.bridge.aceApiReady ? ["ACE-Step 真唱改写（自动调用）"] : (root.bridge && root.bridge.aceWebReady ? ["ACE-Step 等待自动接口"] : ["ACE-Step 未启动"])
                     currentIndex: 0
                     enabled: false
                 }
 
                 Text {
-                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。启用 ACE 自动接口后，点击下方按钮会直接把选中句子提交给 ACE 真唱改写；CPU 模式可能需要较长时间。" : "改词唱后端：本机轻量改词唱（备用）"
+                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。点击下方按钮会直接把选中句子提交给 ACE 真唱改写；CPU 模式可能需要较长时间。" : "改词唱后端：ACE-Step 真唱改写"
                     color: root.textDim
                     font.pixelSize: 12
                     wrapMode: Text.WordWrap
@@ -945,8 +945,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 10
                     PrimaryButton {
-                        text: root.bridge && root.bridge.aceStartupBusy ? "模型启动中" : (root.bridge && root.bridge.aceApiReady ? "模型已启动" : "启动 ACE 模型")
-                        enabled: root.bridge && !root.bridge.aceStartupBusy && !root.bridge.aceApiReady
+                        text: root.bridge && root.bridge.aceStartupBusy ? "模型启动中" : (root.bridge && (root.bridge.aceApiReady || root.bridge.aceWebReady) ? "模型已启动" : "启动 ACE 模型")
+                        enabled: root.bridge && !root.bridge.aceStartupBusy && !root.bridge.aceApiReady && !root.bridge.aceWebReady
                         Layout.fillWidth: true
                         onClicked: if (root.bridge) root.bridge.startAceModel()
                     }
@@ -1036,8 +1036,8 @@ ApplicationWindow {
                 }
 
                 PrimaryButton {
-                    text: root.bridge && root.bridge.lyricRewriteBusy ? "正在智能改唱" : (root.bridge && root.bridge.aceApiReady ? "调用 ACE 真唱并修补" : "启动智能改唱并修补")
-                    enabled: root.rewriteLyricIndex >= 0 && !(root.bridge && root.bridge.lyricRewriteBusy)
+                    text: root.bridge && root.bridge.lyricRewriteBusy ? "正在智能改唱" : (root.bridge && root.bridge.aceApiReady ? "调用 ACE 真唱并修补" : "请先启动 ACE 模型")
+                    enabled: root.rewriteLyricIndex >= 0 && root.bridge && root.bridge.aceApiReady && !(root.bridge && root.bridge.lyricRewriteBusy)
                     Layout.fillWidth: true
                     onClicked: if (root.bridge) root.bridge.generateLyricRewrite(root.rewriteLyricIndex, rightRewriteText.text)
                 }
@@ -1460,7 +1460,7 @@ ApplicationWindow {
 
                 ComboBox {
                     Layout.fillWidth: true
-                    model: root.bridge && root.bridge.aceApiReady ? ["ACE-Step 真唱改写（自动调用）"] : (root.bridge && root.bridge.aceWebReady ? ["ACE-Step 已启动但未开自动接口", "本机轻量改词唱（备用）"] : ["本机轻量改词唱（备用）"])
+                    model: root.bridge && root.bridge.aceApiReady ? ["ACE-Step 真唱改写（自动调用）"] : (root.bridge && root.bridge.aceWebReady ? ["ACE-Step 等待自动接口"] : ["ACE-Step 未启动"])
                     currentIndex: 0
                     enabled: false
                 }
@@ -1469,8 +1469,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 10
                     PrimaryButton {
-                        text: root.bridge && root.bridge.aceStartupBusy ? "模型启动中" : (root.bridge && root.bridge.aceApiReady ? "模型已启动" : "启动 ACE 模型")
-                        enabled: root.bridge && !root.bridge.aceStartupBusy && !root.bridge.aceApiReady
+                        text: root.bridge && root.bridge.aceStartupBusy ? "模型启动中" : (root.bridge && (root.bridge.aceApiReady || root.bridge.aceWebReady) ? "模型已启动" : "启动 ACE 模型")
+                        enabled: root.bridge && !root.bridge.aceStartupBusy && !root.bridge.aceApiReady && !root.bridge.aceWebReady
                         Layout.fillWidth: true
                         onClicked: if (root.bridge) root.bridge.startAceModel()
                     }
@@ -1533,7 +1533,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。启用 ACE 自动接口后，点击下方按钮会直接把选中句子提交给 ACE 真唱改写；CPU 模式可能需要较长时间。" : "改词唱后端：本机轻量改词唱（备用）"
+                    text: root.bridge ? root.bridge.lyricRewriteBackendStatus + "。点击下方按钮会直接把选中句子提交给 ACE 真唱改写；CPU 模式可能需要较长时间。" : "改词唱后端：ACE-Step 真唱改写"
                     color: root.textDim
                     font.pixelSize: 12
                     wrapMode: Text.WordWrap
@@ -1568,8 +1568,8 @@ ApplicationWindow {
                 }
 
                 PrimaryButton {
-                    text: root.bridge && root.bridge.lyricRewriteBusy ? "正在智能改唱" : "启动智能改唱并修补"
-                    enabled: root.rewriteLyricIndex >= 0 && !(root.bridge && root.bridge.lyricRewriteBusy)
+                    text: root.bridge && root.bridge.lyricRewriteBusy ? "正在智能改唱" : (root.bridge && root.bridge.aceApiReady ? "调用 ACE 真唱并修补" : "请先启动 ACE 模型")
+                    enabled: root.rewriteLyricIndex >= 0 && root.bridge && root.bridge.aceApiReady && !(root.bridge && root.bridge.lyricRewriteBusy)
                     Layout.fillWidth: true
                     onClicked: if (root.bridge) root.bridge.generateLyricRewrite(root.rewriteLyricIndex, rightPaneRewriteText.text)
                 }

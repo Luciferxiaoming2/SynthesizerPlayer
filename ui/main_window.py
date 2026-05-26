@@ -604,13 +604,7 @@ class WorkbenchBridge(QObject):
 
     @pyqtProperty(str, notify=lyricRewriteChanged)
     def lyricRewriteBackendStatus(self) -> str:
-        try:
-            config = load_lyric_rewrite_backend_config(self._root)
-        except Exception as exc:
-            return f"改词唱配置有误：{exc}"
-        source = "自动检测" if config.config_path is None else config.config_path.name
-        ace_status = self._ace_web_status_label()
-        return f"改词唱后端：{config.label}（{source}）。{config.readiness_label}。{ace_status}"
+        return f"改词唱后端：ACE-Step 真唱改写。{self._ace_web_status_label()}"
 
     @pyqtProperty(bool, notify=lyricRewriteChanged)
     def aceWebReady(self) -> bool:
@@ -1321,14 +1315,11 @@ class WorkbenchBridge(QObject):
         if self._lyric_rewrite_busy:
             self._set_status("改词唱正在生成中，请稍等。")
             return
-        if (
-            QCoreApplication.instance() is not None
-            and self._is_ace_web_ready()
-            and not self._is_ace_api_ready(force=True)
-        ):
-            self._set_status(
-                "ACE 网页已运行，但未启用自动调用接口。请停止 ACE 后用 uv run acestep --enable-api 重新启动。"
-            )
+        if QCoreApplication.instance() is not None and not self._is_ace_api_ready(force=True):
+            if self._is_ace_web_ready(force=True):
+                self._set_status("ACE 工作台已启动，但自动改唱接口还不可用。请点击“停止模型”后重新启动模型。")
+            else:
+                self._set_status("请先启动 ACE 模型，等待右侧显示“模型已启动”后再生成改词唱。")
             self.lyricRewriteChanged.emit()
             return
         text = new_lyric.strip()
@@ -1799,6 +1790,11 @@ class WorkbenchBridge(QObject):
         self._set_ace_startup_state(False, 0, "ACE 模型已停止" if stopped else "未发现正在运行的 ACE 模型")
         self._set_status(self._ace_startup_status)
 
+    def shutdown(self) -> None:
+        self._playback_timer.stop()
+        self._stop_audio_output(reset_engine=False)
+        self.stopAceModel()
+
     @pyqtSlot()
     def refreshAceWorkbenchStatus(self) -> None:
         ready = self._is_ace_web_ready(force=True)
@@ -1880,7 +1876,8 @@ class WorkbenchBridge(QObject):
             self._set_status("ACE 模型已启动，可以在右侧直接调用真唱改写。")
             return
         if self._is_ace_web_ready(force=True):
-            self._set_ace_startup_state(True, max(self._ace_startup_progress, 88), "ACE 网页已启动，正在等待自动接口")
+            self._set_ace_startup_state(False, 100, "ACE 工作台已启动，自动接口正在确认")
+            self._set_status("ACE 工作台已启动；如果自动改唱仍不可用，请点击刷新状态或重新启动模型。")
 
     def _open_folder(self, folder: Path, label: str) -> None:
         folder.mkdir(parents=True, exist_ok=True)
@@ -2765,11 +2762,35 @@ ACE_API_BASE_URL = "http://127.0.0.1:7860"
 
 
 def is_ace_api_ready(base_url: str = ACE_API_BASE_URL) -> bool:
+    def request_ok(url: str, *, timeout: float = 1.5, allowed_codes: set[int] | None = None) -> bool:
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as response:
+                return response.status in allowed_codes if allowed_codes is not None else 200 <= response.status < 400
+        except urllib.error.HTTPError as exc:
+            return exc.code in allowed_codes if allowed_codes is not None else 200 <= exc.code < 400
+        except (OSError, urllib.error.URLError, TimeoutError):
+            return False
+
     try:
-        with urllib.request.urlopen(f"{base_url}/health", timeout=0.6) as response:
-            return 200 <= response.status < 500
+        with urllib.request.urlopen(f"{base_url}/health", timeout=1.5) as response:
+            if 200 <= response.status < 400:
+                return True
+    except urllib.error.HTTPError as exc:
+        if 200 <= exc.code < 400:
+            return True
     except (OSError, urllib.error.URLError, TimeoutError):
+        pass
+
+    try:
+        with urllib.request.urlopen(f"{base_url}/openapi.json", timeout=1.5) as response:
+            if not (200 <= response.status < 400):
+                return False
+            payload = response.read(1024 * 1024).decode("utf-8", errors="ignore")
+            return "/release_task" in payload and "/query_result" in payload
+    except urllib.error.HTTPError as exc:
         return False
+    except (OSError, urllib.error.URLError, TimeoutError):
+        return request_ok(f"{base_url}/query_result", timeout=1.0, allowed_codes={400, 401, 405, 422})
 
 
 def process_ids_on_port(port: int) -> list[int]:
@@ -3295,9 +3316,9 @@ def format_lyric_rewrite_error(message: str) -> str:
     if "选中的歌词时间超出当前音频长度" in message:
         return "改词唱失败：选中的歌词时间超出当前人声音轨长度，请先重新生成或校正歌词时间。"
     if "CalledProcessError" in message:
-        return "改词唱失败：外部改唱工具执行失败，请检查模型环境或先切回本机轻量试听。"
+        return "改词唱失败：ACE 外部改唱工具执行失败，请检查模型环境后重新启动 ACE。"
     if "No module named" in message:
-        return "改词唱失败：当前改唱运行环境缺少组件，请使用完整安装包或本机轻量试听模式。"
+        return "改词唱失败：当前 ACE 改唱运行环境缺少组件，请使用完整安装包或重新部署 ACE。"
     return f"改词唱失败：{short_error_detail(message)}"
 
 
@@ -3364,6 +3385,7 @@ def main() -> None:
     resource_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
     user_root = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else resource_root
     bridge = WorkbenchBridge(user_root)
+    app.aboutToQuit.connect(bridge.shutdown)
     engine.rootContext().setContextProperty("audioWorkbench", bridge)
     engine.warnings.connect(lambda warnings: [print(warning.toString()) for warning in warnings])
     engine.load(QUrl.fromLocalFile(str(resource_root / "ui" / "qml" / "SingleScreenUI.qml")))
