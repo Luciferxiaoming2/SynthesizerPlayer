@@ -374,6 +374,14 @@ class WorkbenchBridge(QObject):
         super().__init__()
         self._root = root
         self._mock_dir = root / "harness" / "mock_data"
+        self._user_data_root = root / "user_data"
+        self._config_path = self._user_data_root / "config.json"
+        self._recent_path = self._user_data_root / "recent.json"
+        self._logs_root = self._user_data_root / "logs"
+        self._cache_root = self._user_data_root / "cache"
+        self._user_data_root.mkdir(parents=True, exist_ok=True)
+        self._logs_root.mkdir(parents=True, exist_ok=True)
+        self._cache_root.mkdir(parents=True, exist_ok=True)
         self._projects_root = root / "save"
         self._projects_root.mkdir(parents=True, exist_ok=True)
         self._songs_root = self._projects_root
@@ -452,11 +460,14 @@ class WorkbenchBridge(QObject):
         self._last_alignment_latency_ms: float | None = None
         self._last_alignment_passed: bool | None = None
         self._play_mode = "list"
+        self._load_user_settings()
+        self._save_config()
         self._tone_deaf_cache = ToneDeafBufferCache()
         self._playback_timer = QTimer(self)
         self._playback_timer.setInterval(100)
         self._playback_timer.timeout.connect(self.advancePlayback)
         self._songs = scan_song_library(self._songs_root)
+        self._load_recent_song_if_needed()
         self._load_first_song_if_needed()
 
     def _migrate_legacy_project_outputs(self) -> None:
@@ -484,6 +495,89 @@ class WorkbenchBridge(QObject):
         for path in legacy_outputs:
             target = unique_child_path(target_dir, f"{path.name}.wav")
             shutil.move(str(path), str(target))
+
+    def _read_json_file(self, path: Path) -> dict:
+        try:
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+        except (OSError, json.JSONDecodeError):
+            pass
+        return {}
+
+    def _write_json_file(self, path: Path, data: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_suffix(path.suffix + ".tmp")
+        temp_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        temp_path.replace(path)
+
+    def _load_user_settings(self) -> None:
+        config = self._read_json_file(self._config_path)
+        def number_value(key: str, default, value_type=float):
+            try:
+                return value_type(config.get(key, default))
+            except (TypeError, ValueError):
+                return default
+
+        songs_root = config.get("songs_root")
+        if isinstance(songs_root, str) and songs_root.strip():
+            self._songs_root = Path(songs_root)
+            self._songs_root.mkdir(parents=True, exist_ok=True)
+        self._play_mode = str(config.get("play_mode") or self._play_mode)
+        if self._play_mode not in {"list", "loop"}:
+            self._play_mode = "list"
+        self._vocal_gain = max(0.0, number_value("vocal_gain", self._vocal_gain))
+        self._instrumental_gain = max(0.0, number_value("instrumental_gain", self._instrumental_gain))
+        self._tone_deaf_ratio = max(0.0, min(1.0, number_value("tone_deaf_ratio", self._tone_deaf_ratio)))
+        self._lyrics_offset_ms = max(-10_000, min(10_000, number_value("lyrics_offset_ms", self._lyrics_offset_ms, int)))
+
+    def _save_config(self) -> None:
+        data = {
+            "version": 1,
+            "songs_root": str(self._songs_root),
+            "play_mode": self._play_mode,
+            "vocal_gain": self._vocal_gain,
+            "instrumental_gain": self._instrumental_gain,
+            "tone_deaf_ratio": self._tone_deaf_ratio,
+            "lyrics_offset_ms": self._lyrics_offset_ms,
+            "ace_base_url": ACE_API_BASE_URL,
+        }
+        try:
+            self._write_json_file(self._config_path, data)
+        except OSError:
+            pass
+
+    def _save_recent_state(self) -> None:
+        current_song = None
+        if 0 <= self._current_song_index < len(self._songs):
+            song = self._songs[self._current_song_index]
+            current_song = {
+                "name": song.name,
+                "root": str(song.root),
+                "source_path": str(song.source_path) if song.source_path is not None else None,
+                "index": self._current_song_index,
+            }
+        data = {
+            "version": 1,
+            "current_song": current_song,
+            "updated_at": int(time.time()),
+        }
+        try:
+            self._write_json_file(self._recent_path, data)
+        except OSError:
+            pass
+
+    def _append_app_log(self, message: str) -> None:
+        try:
+            line = time.strftime("%Y-%m-%d %H:%M:%S") + f" {message}\n"
+            with (self._logs_root / "app.log").open("a", encoding="utf-8") as log_file:
+                log_file.write(line)
+        except OSError:
+            pass
 
     @pyqtProperty(str, notify=statusChanged)
     def status(self) -> str:
@@ -911,6 +1005,7 @@ class WorkbenchBridge(QObject):
     def cyclePlayMode(self) -> None:
         self._play_mode = "loop" if self._play_mode == "list" else "list"
         self.playbackChanged.emit()
+        self._save_config()
         self._set_status(f"播放模式：{self.playModeLabel}")
 
     @pyqtSlot()
@@ -993,6 +1088,7 @@ class WorkbenchBridge(QObject):
     def setTrackGains(self, vocal_gain: float, instrumental_gain: float) -> None:
         self._vocal_gain = max(0.0, float(vocal_gain))
         self._instrumental_gain = max(0.0, float(instrumental_gain))
+        self._save_config()
         if self._playback is None:
             self.playbackChanged.emit()
             return
@@ -1006,6 +1102,7 @@ class WorkbenchBridge(QObject):
     def setToneDeafRatio(self, ratio: float) -> None:
         target_ratio = max(0.0, min(1.0, float(ratio)))
         self._tone_deaf_ratio = target_ratio
+        self._save_config()
         if self._playback is None:
             self._set_status("已设置跑调强度；导入、加载或导出时生效")
             self.playbackChanged.emit()
@@ -1089,6 +1186,7 @@ class WorkbenchBridge(QObject):
         self._lyrics_offset_ms = max(-10_000, min(10_000, int(offset_ms)))
         self._lyrics_sync = self._lyrics_sync.with_offset(self._lyrics_offset_ms)
         self._update_lyrics()
+        self._save_config()
         self.lyricPositionChanged.emit()
         if self._lyrics_offset_ms == 0:
             self._set_status("歌词对齐已恢复为 0 秒，不做校正")
@@ -1681,6 +1779,8 @@ class WorkbenchBridge(QObject):
     @pyqtSlot(str)
     def setSongsRootFromUrl(self, url: str) -> None:
         self._songs_root = Path(QUrl(url).toLocalFile())
+        self._songs_root.mkdir(parents=True, exist_ok=True)
+        self._save_config()
         self.songsChanged.emit()
         self.scanSongs()
 
@@ -1791,6 +1891,8 @@ class WorkbenchBridge(QObject):
         self._set_status(self._ace_startup_status)
 
     def shutdown(self) -> None:
+        self._save_config()
+        self._save_recent_state()
         self._playback_timer.stop()
         self._stop_audio_output(reset_engine=False)
         self.stopAceModel()
@@ -1924,6 +2026,23 @@ class WorkbenchBridge(QObject):
             return
         self._load_song_at(0, throttle=False)
 
+    def _load_recent_song_if_needed(self) -> None:
+        if self._current_song_index >= 0 or not self._songs:
+            return
+        recent = self._read_json_file(self._recent_path)
+        song_info = recent.get("current_song")
+        if not isinstance(song_info, dict):
+            return
+        root_text = song_info.get("root")
+        name_text = song_info.get("name")
+        for index, song in enumerate(self._songs):
+            if root_text and str(song.root) == str(root_text) and song.source_path is None:
+                self._load_song_at(index, throttle=False)
+                return
+            if name_text and song.name == name_text and song.source_path is None:
+                self._load_song_at(index, throttle=False)
+                return
+
     @pyqtSlot(int)
     def loadSongAt(self, index: int) -> None:
         self._load_song_at(index, throttle=True)
@@ -1944,6 +2063,7 @@ class WorkbenchBridge(QObject):
             if selected.source_path is not None:
                 self._current_song_index = index
                 self.songsChanged.emit()
+                self._save_recent_state()
                 self.importSongWithBackendsAsync(
                     QUrl.fromLocalFile(str(selected.source_path)).toString(),
                     self._separator_backend,
@@ -1967,6 +2087,7 @@ class WorkbenchBridge(QObject):
             self.pathsChanged.emit()
             self._emit_lyrics_reloaded()
             self.songsChanged.emit()
+            self._save_recent_state()
             self._set_status(f"已加载歌曲：{session.asset.name}")
             self.loadPlayback()
         except Exception:
@@ -2029,6 +2150,7 @@ class WorkbenchBridge(QObject):
         self._current_lyric_progress = 0.0
         self._emit_lyrics_reloaded()
         self.playbackChanged.emit()
+        self._save_recent_state()
 
     def _release_heavy_audio_state(self) -> None:
         self._tone_deaf_cache.clear()
@@ -2349,6 +2471,7 @@ class WorkbenchBridge(QObject):
         self.pathsChanged.emit()
         self.loadPlayback()
         self._refresh_songs_after_import(project.asset)
+        self._save_recent_state()
         self._set_status(
             f"导入成功：{project.name}"
             f"（分离={separator_backend_label(separator_backend)}，"
@@ -2506,6 +2629,7 @@ class WorkbenchBridge(QObject):
         self._songs.insert(0, asset)
         self._current_song_index = 0
         self.songsChanged.emit()
+        self._save_recent_state()
 
     def _refresh_songs_after_import(self, asset: SongAsset) -> None:
         imported_key = song_key(asset)
@@ -2515,6 +2639,7 @@ class WorkbenchBridge(QObject):
                 self._current_song_index = index
                 self._current_song_key = song_key(song)
                 self.songsChanged.emit()
+                self._save_recent_state()
                 return
         self._upsert_song(asset)
 
@@ -2583,6 +2708,7 @@ class WorkbenchBridge(QObject):
 
     def _set_status(self, value: str) -> None:
         self._status = value
+        self._append_app_log(value)
         self.statusChanged.emit()
 
     def _song_duration_label(self, song: SongAsset) -> str:

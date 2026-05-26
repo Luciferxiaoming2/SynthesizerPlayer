@@ -174,7 +174,33 @@ def test_workbench_bridge_defaults_to_portable_import_library(tmp_path):
 
     assert bridge.songsRoot == str(tmp_path / "save")
     assert (tmp_path / "save").exists()
+    assert (tmp_path / "user_data" / "config.json").exists()
+    assert (tmp_path / "user_data" / "logs").is_dir()
+    assert (tmp_path / "user_data" / "cache").is_dir()
     assert bridge.separatorBackend == "demucs"
+
+
+def test_workbench_bridge_persists_user_settings(tmp_path):
+    bridge = WorkbenchBridge(tmp_path)
+
+    bridge.cyclePlayMode()
+    bridge.setTrackGains(0.42, 0.73)
+    bridge.setToneDeafRatio(0.25)
+    bridge.setLyricsOffsetMs(500)
+
+    config = json.loads((tmp_path / "user_data" / "config.json").read_text(encoding="utf-8"))
+    assert config["play_mode"] == "loop"
+    assert config["vocal_gain"] == pytest.approx(0.42)
+    assert config["instrumental_gain"] == pytest.approx(0.73)
+    assert config["tone_deaf_ratio"] == pytest.approx(0.25)
+    assert config["lyrics_offset_ms"] == 500
+
+    restored = WorkbenchBridge(tmp_path)
+    assert restored.playModeLabel == "单曲循环"
+    assert restored.vocalGain == pytest.approx(0.42)
+    assert restored.instrumentalGain == pytest.approx(0.73)
+    assert restored.toneDeafRatio == pytest.approx(0.25)
+    assert restored.lyricsOffsetMs == 500
 
 
 def test_workbench_bridge_migrates_legacy_projects_into_save(tmp_path):

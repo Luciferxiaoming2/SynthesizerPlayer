@@ -68,6 +68,7 @@ harness/mock_data/*
 projects/
 导入歌曲/
 save/
+user_data/
 *.wav
 *.mp3
 *.flac
