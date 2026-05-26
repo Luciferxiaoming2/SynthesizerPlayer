@@ -1347,35 +1347,43 @@ ApplicationWindow {
             color: "#0c0e15"
             border.color: "#1e212c"
 
-            ColumnLayout {
+            ScrollView {
+                id: rewriteScroll
                 visible: root.rewriteLyricIndex >= 0
                 anchors.fill: parent
                 anchors.margins: 18
-                spacing: 14
+                clip: true
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                contentWidth: availableWidth
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    Text {
-                        text: "AI 智能改唱工作舱"
-                        color: root.accent2
-                        font.pixelSize: 18
-                        font.bold: true
+                ColumnLayout {
+                    width: rewriteScroll.availableWidth
+                    spacing: 14
+
+                    RowLayout {
                         Layout.fillWidth: true
-                        elide: Text.ElideRight
+                        Text {
+                            text: "AI 智能改唱工作舱"
+                            color: root.accent2
+                            font.pixelSize: 18
+                            font.bold: true
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+                        SecondaryButton {
+                            text: "返回"
+                            Layout.preferredWidth: 72
+                            Layout.preferredHeight: 34
+                            onClicked: root.rewriteLyricIndex = -1
+                        }
                     }
-                    SecondaryButton {
-                        text: "返回"
-                        Layout.preferredWidth: 72
-                        Layout.preferredHeight: 34
-                        onClicked: root.rewriteLyricIndex = -1
-                    }
-                }
 
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 1
-                    color: "#2a1b2a"
-                }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: "#2a1b2a"
+                    }
 
                 Text {
                     text: root.rewriteLyricIndex >= 0 ? ("选中时间戳  " + (root.bridge && root.bridge.lyricTimeLabels.length > root.rewriteLyricIndex ? root.bridge.lyricTimeLabels[root.rewriteLyricIndex] : "--:--")) : "未选择"
@@ -1624,7 +1632,11 @@ ApplicationWindow {
                     }
                 }
 
-                Item { Layout.fillHeight: true }
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 6
+                    }
+                }
             }
 
             ColumnLayout {

@@ -97,6 +97,21 @@ def test_workbench_bridge_finds_ace_runtime_dir(tmp_path):
     assert bridge._ace_runtime_dir() == runtime
 
 
+def test_ace_startup_poll_marks_model_ready(tmp_path, monkeypatch):
+    bridge = WorkbenchBridge(tmp_path)
+    bridge._set_ace_startup_state(True, 88, "ACE 网页已启动，正在等待自动接口")
+
+    monkeypatch.setattr(bridge, "_is_ace_api_ready", lambda *, force=False: True)
+    monkeypatch.setattr(bridge, "_is_ace_web_ready", lambda *, force=False: True)
+
+    bridge._poll_ace_startup_status()
+
+    assert bridge.aceStartupBusy is False
+    assert bridge.aceStartupProgress == 100
+    assert bridge.aceApiReady is True
+    assert "ACE" in bridge.aceStartupStatus
+
+
 def test_local_tts_rewrite_segment_pads_instead_of_extreme_time_stretch():
     source = np.ones((1_000, 1), dtype=np.float32) * 0.25
 

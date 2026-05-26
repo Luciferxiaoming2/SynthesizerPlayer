@@ -420,6 +420,9 @@ class WorkbenchBridge(QObject):
         self._ace_startup_busy = False
         self._ace_startup_progress = 0
         self._ace_startup_status = "ACE 模型未由本应用启动"
+        self._ace_startup_poll_timer = QTimer(self)
+        self._ace_startup_poll_timer.setInterval(2500)
+        self._ace_startup_poll_timer.timeout.connect(self._poll_ace_startup_status)
         self._playback: DualTrackPlaybackEngine | None = None
         self._vocal_gain = 1.0
         self._instrumental_gain = 0.8
@@ -1774,6 +1777,7 @@ class WorkbenchBridge(QObject):
             self._set_ace_startup_state(False, 0, "ACE 启动失败：进程未能启动")
             self._ace_process = None
             return
+        self._ace_startup_poll_timer.start()
         self._set_ace_startup_state(True, 18, "ACE 进程已启动，正在加载模型")
         self._set_status("正在启动 ACE 模型，CPU 模式可能需要一段时间。")
 
@@ -1791,6 +1795,7 @@ class WorkbenchBridge(QObject):
         self._ace_process = None
         self._ace_api_reachable = False
         self._ace_service_reachable = False
+        self._ace_startup_poll_timer.stop()
         self._set_ace_startup_state(False, 0, "ACE 模型已停止" if stopped else "未发现正在运行的 ACE 模型")
         self._set_status(self._ace_startup_status)
 
@@ -1822,6 +1827,8 @@ class WorkbenchBridge(QObject):
         self._ace_startup_busy = busy
         self._ace_startup_progress = max(0, min(100, int(progress)))
         self._ace_startup_status = status
+        if not busy:
+            self._ace_startup_poll_timer.stop()
         self.lyricRewriteChanged.emit()
 
     def _handle_ace_process_output(self) -> None:
@@ -1845,6 +1852,7 @@ class WorkbenchBridge(QObject):
             self._set_ace_startup_state(True, 78, "正在启动 ACE 本地服务")
         elif "running on local url" in lower:
             self._set_ace_startup_state(True, 88, "ACE 网页已启动，正在等待自动接口")
+            self._poll_ace_startup_status()
         elif "api endpoints enabled" in lower:
             self._ace_api_reachable = True
             self._ace_service_reachable = True
@@ -1861,6 +1869,18 @@ class WorkbenchBridge(QObject):
         if self._ace_startup_busy:
             self._set_ace_startup_state(False, 0, f"ACE 进程已退出，退出码：{exit_code}")
             self._set_status(self._ace_startup_status)
+
+    def _poll_ace_startup_status(self) -> None:
+        if not self._ace_startup_busy:
+            self._ace_startup_poll_timer.stop()
+            return
+        if self._is_ace_api_ready(force=True):
+            self._ace_service_reachable = True
+            self._set_ace_startup_state(False, 100, "ACE 模型已启动，自动改词接口可用")
+            self._set_status("ACE 模型已启动，可以在右侧直接调用真唱改写。")
+            return
+        if self._is_ace_web_ready(force=True):
+            self._set_ace_startup_state(True, max(self._ace_startup_progress, 88), "ACE 网页已启动，正在等待自动接口")
 
     def _open_folder(self, folder: Path, label: str) -> None:
         folder.mkdir(parents=True, exist_ok=True)
