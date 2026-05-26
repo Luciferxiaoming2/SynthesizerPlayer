@@ -943,7 +943,7 @@ ApplicationWindow {
 
                 ComboBox {
                     Layout.fillWidth: true
-                    model: root.bridge && root.bridge.aceApiReady ? ["ACE-Step 真唱改写（自动调用）"] : (root.bridge && root.bridge.aceWebReady ? ["ACE-Step 等待自动接口"] : ["ACE-Step 未启动"])
+                    model: root.bridge && root.bridge.aceApiReady ? ["ACE-Step 真唱改写（自动调用）"] : (root.bridge && root.bridge.aceWebReady ? ["检测到网页工作台，请启动 API"] : ["ACE-Step 未启动"])
                     currentIndex: 0
                     enabled: false
                 }
@@ -960,8 +960,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 10
                     PrimaryButton {
-                        text: root.bridge && root.bridge.aceStartupBusy ? "模型启动中" : (root.bridge && (root.bridge.aceApiReady || root.bridge.aceWebReady) ? "模型已启动" : "启动 ACE 模型")
-                        enabled: root.bridge && !root.bridge.aceStartupBusy && !root.bridge.aceApiReady && !root.bridge.aceWebReady
+                        text: root.bridge && root.bridge.aceStartupBusy ? "模型启动中" : (root.bridge && root.bridge.aceApiReady ? "模型已启动" : "启动 ACE 模型")
+                        enabled: root.bridge && !root.bridge.aceStartupBusy && !root.bridge.aceApiReady
                         Layout.fillWidth: true
                         onClicked: if (root.bridge) root.bridge.startAceModel()
                     }
@@ -1005,12 +1005,12 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 10
                     SecondaryButton {
-                        text: root.bridge && root.bridge.aceWebReady ? "打开 ACE 工作台" : "检测 ACE"
+                        text: root.bridge && root.bridge.aceApiReady ? "打开 API 文档" : "检测 ACE"
                         Layout.fillWidth: true
                         onClicked: {
                             if (!root.bridge)
                                 return
-                            if (root.bridge.aceWebReady)
+                            if (root.bridge.aceApiReady)
                                 root.bridge.openAceWorkbench()
                             else
                                 root.bridge.refreshAceWorkbenchStatus()
@@ -1487,7 +1487,7 @@ ApplicationWindow {
 
                 ComboBox {
                     Layout.fillWidth: true
-                    model: root.bridge && root.bridge.aceApiReady ? ["ACE-Step 真唱改写（自动调用）"] : (root.bridge && root.bridge.aceWebReady ? ["ACE-Step 等待自动接口"] : ["ACE-Step 未启动"])
+                    model: root.bridge && root.bridge.aceApiReady ? ["ACE-Step 真唱改写（自动调用）"] : (root.bridge && root.bridge.aceWebReady ? ["检测到网页工作台，请启动 API"] : ["ACE-Step 未启动"])
                     currentIndex: 0
                     enabled: false
                 }
@@ -1496,8 +1496,8 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 10
                     PrimaryButton {
-                        text: root.bridge && root.bridge.aceStartupBusy ? "模型启动中" : (root.bridge && (root.bridge.aceApiReady || root.bridge.aceWebReady) ? "模型已启动" : "启动 ACE 模型")
-                        enabled: root.bridge && !root.bridge.aceStartupBusy && !root.bridge.aceApiReady && !root.bridge.aceWebReady
+                        text: root.bridge && root.bridge.aceStartupBusy ? "模型启动中" : (root.bridge && root.bridge.aceApiReady ? "模型已启动" : "启动 ACE 模型")
+                        enabled: root.bridge && !root.bridge.aceStartupBusy && !root.bridge.aceApiReady
                         Layout.fillWidth: true
                         onClicked: if (root.bridge) root.bridge.startAceModel()
                     }
@@ -1541,12 +1541,12 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: 10
                     SecondaryButton {
-                        text: root.bridge && root.bridge.aceWebReady ? "打开 ACE 工作台" : "检测 ACE"
+                        text: root.bridge && root.bridge.aceApiReady ? "打开 API 文档" : "检测 ACE"
                         Layout.fillWidth: true
                         onClicked: {
                             if (!root.bridge)
                                 return
-                            if (root.bridge.aceWebReady)
+                            if (root.bridge.aceApiReady)
                                 root.bridge.openAceWorkbench()
                             else
                                 root.bridge.refreshAceWorkbenchStatus()

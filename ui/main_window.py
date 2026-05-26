@@ -219,10 +219,15 @@ class SongScanWorker(QObject):
             self.failed.emit(traceback.format_exc(limit=1).strip())
 
 
+ACE_API_PORT = 8001
+ACE_API_BASE_URL = f"http://127.0.0.1:{ACE_API_PORT}"
+ACE_GRADIO_PORT = 7860
+
+
 class AceStartupPreflightWorker(QObject):
     finished = pyqtSignal(object)
 
-    def __init__(self, root: Path, port: int = 7860) -> None:
+    def __init__(self, root: Path, port: int = ACE_API_PORT) -> None:
         super().__init__()
         self._root = root
         self._port = port
@@ -1626,7 +1631,7 @@ class WorkbenchBridge(QObject):
             return
         if QCoreApplication.instance() is not None and not self._is_ace_api_ready(force=True):
             if self._is_ace_web_ready(force=True):
-                self._set_status("ACE 工作台已启动，但自动改唱接口还不可用。请点击“停止模型”后重新启动模型。")
+                self._set_status("检测到 ACE 网页工作台，但自动改唱需要 8001 API 服务。请点击“启动 ACE 模型”。")
             else:
                 self._set_status("请先启动 ACE 模型，等待右侧显示“模型已启动”后再生成改词唱。")
             self.lyricRewriteChanged.emit()
@@ -2070,15 +2075,15 @@ class WorkbenchBridge(QObject):
 
     @pyqtSlot()
     def openAceWorkbench(self) -> None:
-        url = QUrl("http://127.0.0.1:7860")
+        url = QUrl(f"{ACE_API_BASE_URL}/docs")
         opened = QDesktopServices.openUrl(url)
         if opened:
-            if self._is_ace_web_ready(force=True):
-                self._set_status("已打开 ACE-Step 工作台。请在网页中选择 Repaint/改写片段模式进行真实 AI 生成测试。")
+            if self._is_ace_api_ready(force=True):
+                self._set_status("已打开 ACE-Step API 文档页，自动改唱接口已就绪。")
             else:
-                self._set_status("已尝试打开 ACE-Step 工作台；如果浏览器打不开，请先启动 ACE 模型到 7860 端口。")
+                self._set_status(f"已尝试打开 ACE-Step API 文档页；如果浏览器打不开，请先启动 ACE 模型到 {ACE_API_PORT} 端口。")
         else:
-            self._set_status("无法自动打开 ACE-Step 工作台，请手动访问：http://127.0.0.1:7860")
+            self._set_status(f"无法自动打开 ACE-Step API 文档页，请手动访问：{ACE_API_BASE_URL}/docs")
 
     @pyqtSlot()
     def startAceModel(self) -> None:
@@ -2086,7 +2091,7 @@ class WorkbenchBridge(QObject):
             self._set_status("ACE 模型正在启动中，请稍等。")
             return
         self._ace_startup_cancelled = False
-        self._set_ace_startup_state(True, 5, "正在后台检查 ACE 环境和 7860 端口")
+        self._set_ace_startup_state(True, 5, f"正在后台检查 ACE 环境和 {ACE_API_PORT} 端口")
         self._set_status("正在准备启动 ACE 模型，界面可以继续操作。")
         self._ace_preflight_thread = QThread(self)
         self._ace_preflight_worker = AceStartupPreflightWorker(self._root)
@@ -2121,9 +2126,9 @@ class WorkbenchBridge(QObject):
             return
         killed = [str(pid) for pid in data.get("killed", []) if str(pid)]
         if killed:
-            self._set_ace_startup_state(True, 14, f"已释放 7860 端口：{', '.join(killed)}")
+            self._set_ace_startup_state(True, 14, f"已释放 {ACE_API_PORT} 端口：{', '.join(killed)}")
         else:
-            self._set_ace_startup_state(True, 14, "7860 端口可用，正在启动 ACE")
+            self._set_ace_startup_state(True, 14, f"{ACE_API_PORT} 端口可用，正在启动 ACE")
         self._start_ace_process(Path(runtime_dir_text), uv_path)
 
     def _cleanup_ace_preflight_thread(self) -> None:
@@ -2134,7 +2139,15 @@ class WorkbenchBridge(QObject):
         process = QProcess(self)
         process.setWorkingDirectory(str(runtime_dir))
         process.setProgram(uv_path)
-        process.setArguments(["run", "acestep", "--enable-api", "--server-name", "127.0.0.1", "--port", "7860"])
+        process.setArguments([
+            "run",
+            "--no-sync",
+            "acestep-api",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(ACE_API_PORT),
+        ])
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         process.started.connect(self._handle_ace_process_started)
         process.readyReadStandardOutput.connect(self._handle_ace_process_output)
@@ -2164,7 +2177,7 @@ class WorkbenchBridge(QObject):
                 self._ace_process.kill()
             if pid:
                 stopped.append(pid)
-        stopped.extend(pid for pid in kill_processes_on_port(7860) if pid not in stopped)
+        stopped.extend(pid for pid in kill_processes_on_port(ACE_API_PORT) if pid not in stopped)
         self._ace_process = None
         self._ace_api_reachable = False
         self._ace_service_reachable = False
@@ -2187,15 +2200,14 @@ class WorkbenchBridge(QObject):
 
     @pyqtSlot()
     def refreshAceWorkbenchStatus(self) -> None:
-        ready = self._is_ace_web_ready(force=True)
         api_ready = self._is_ace_api_ready(force=True)
         self.lyricRewriteChanged.emit()
         if api_ready:
             self._set_status("ACE-Step 自动改唱接口已就绪，右侧按钮会调用 ACE 真唱改写。")
-        elif ready:
-            self._set_status("ACE-Step 工作台已运行，但自动接口未开启。请用 uv run acestep --enable-api 重启。")
+        elif self._is_ace_web_ready(force=True):
+            self._set_status("检测到 ACE-Step 网页工作台，但自动改唱需要启动 8001 API 服务。请点击启动 ACE 模型。")
         else:
-            self._set_status("未检测到 ACE-Step 工作台。请先在 ACE-Step-1.5 目录执行 uv run acestep。")
+            self._set_status("未检测到 ACE-Step API 服务。请点击右侧“启动 ACE 模型”。")
 
     def _ace_runtime_dir(self) -> Path | None:
         return ace_runtime_dir_for_root(self._root)
@@ -2212,8 +2224,18 @@ class WorkbenchBridge(QObject):
         if self._ace_process is None:
             return
         raw = bytes(self._ace_process.readAllStandardOutput()).decode("utf-8", errors="ignore")
+        self._append_ace_startup_log(raw)
         for line in raw.splitlines():
             self._update_ace_startup_from_log(line.strip())
+
+    def _append_ace_startup_log(self, text: str) -> None:
+        if not text:
+            return
+        try:
+            with (self._logs_root / "ace_startup.log").open("a", encoding="utf-8") as log_file:
+                log_file.write(text)
+        except OSError:
+            pass
 
     def _update_ace_startup_from_log(self, line: str) -> None:
         if not line:
@@ -2223,12 +2245,18 @@ class WorkbenchBridge(QObject):
             self._set_ace_startup_state(True, 35, "已完成硬件检测，正在准备模型")
         elif "no gpu detected" in lower or "running on cpu" in lower:
             self._set_ace_startup_state(True, 42, "未检测到独显，ACE 正在使用 CPU 模式")
+        elif "starting ace-step api server" in lower:
+            self._set_ace_startup_state(True, 55, "正在启动 ACE API 服务")
+        elif "api will be available" in lower or "api documentation" in lower:
+            self._set_ace_startup_state(True, 70, "ACE API 服务正在开放本地端口")
         elif "creating gradio interface" in lower:
             self._set_ace_startup_state(True, 62, "正在创建 ACE 工作台界面")
         elif "launching server" in lower:
             self._set_ace_startup_state(True, 78, "正在启动 ACE 本地服务")
-        elif "running on local url" in lower:
-            self._set_ace_startup_state(True, 88, "ACE 网页已启动，正在等待自动接口")
+        elif "uv run --no-sync" in lower or "acestep-api" in lower:
+            self._set_ace_startup_state(True, max(self._ace_startup_progress, 48), "正在加载 ACE API 运行环境")
+        elif "application startup complete" in lower or "uvicorn running" in lower or f"127.0.0.1:{ACE_API_PORT}" in lower:
+            self._set_ace_startup_state(True, 88, "ACE API 已启动，正在确认接口")
             self._poll_ace_startup_status()
         elif "api endpoints enabled" in lower:
             self._ace_api_reachable = True
@@ -2257,8 +2285,7 @@ class WorkbenchBridge(QObject):
             self._set_status("ACE 模型已启动，可以在右侧直接调用真唱改写。")
             return
         if self._is_ace_web_ready(force=True):
-            self._set_ace_startup_state(False, 100, "ACE 工作台已启动，自动接口正在确认")
-            self._set_status("ACE 工作台已启动；如果自动改唱仍不可用，请点击刷新状态或重新启动模型。")
+            self._set_ace_startup_state(True, max(self._ace_startup_progress, 72), "检测到 ACE 网页工作台，仍在等待 API 服务")
 
     def _open_folder(self, folder: Path, label: str) -> None:
         folder.mkdir(parents=True, exist_ok=True)
@@ -2292,8 +2319,8 @@ class WorkbenchBridge(QObject):
         if self._is_ace_api_ready():
             return "ACE-Step 自动改唱接口已就绪，点击生成会调用 ACE 真唱改写"
         if self._is_ace_web_ready():
-            return "ACE-Step Web 工作台已运行，但未启用自动接口；请用 uv run acestep --enable-api 重启"
-        return "未检测到 ACE-Step Web 工作台；如需真唱生成，请先启动 uv run acestep"
+            return "检测到 ACE-Step 网页工作台；自动改唱需要启动 8001 API 服务"
+        return "未检测到 ACE-Step API 服务；如需真唱生成，请点击启动 ACE 模型"
 
     def _load_first_song_if_needed(self) -> None:
         if self._playback is not None or self._current_song_index >= 0:
@@ -3168,9 +3195,6 @@ def fit_generated_audio_segment(
     for channel in range(channel_count):
         rendered[:, channel] = np.interp(target_positions, source_positions, audio[:, channel])
     return rendered
-
-
-ACE_API_BASE_URL = "http://127.0.0.1:7860"
 
 
 def is_ace_api_ready(base_url: str = ACE_API_BASE_URL, timeout: float = 0.45) -> bool:

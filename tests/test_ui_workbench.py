@@ -48,11 +48,11 @@ def test_workbench_bridge_reports_ace_web_status(tmp_path, monkeypatch):
             return False
 
     def fake_urlopen(url, timeout):
-        if url == "http://127.0.0.1:7860/health":
+        if url == "http://127.0.0.1:8001/health":
             raise OSError("api disabled")
-        if url == "http://127.0.0.1:7860/openapi.json":
+        if url == "http://127.0.0.1:8001/openapi.json":
             raise OSError("api disabled")
-        if url == "http://127.0.0.1:7860/query_result":
+        if url == "http://127.0.0.1:8001/query_result":
             raise OSError("api disabled")
         assert url == "http://127.0.0.1:7860/config"
         assert timeout <= 0.5
@@ -62,7 +62,7 @@ def test_workbench_bridge_reports_ace_web_status(tmp_path, monkeypatch):
     bridge = WorkbenchBridge(tmp_path)
 
     assert bridge.aceWebReady is True
-    assert "ACE-Step Web 工作台已运行" in bridge.aceWebStatus
+    assert "8001 API 服务" in bridge.aceWebStatus
 
 
 def test_ace_api_ready_accepts_openapi_routes_when_health_is_missing(monkeypatch):
@@ -144,7 +144,7 @@ def test_ace_startup_poll_marks_model_ready(tmp_path, monkeypatch):
     assert "ACE" in bridge.aceStartupStatus
 
 
-def test_ace_startup_poll_finishes_when_workbench_is_ready(tmp_path, monkeypatch):
+def test_ace_startup_poll_keeps_waiting_when_only_workbench_is_ready(tmp_path, monkeypatch):
     bridge = WorkbenchBridge(tmp_path)
     bridge._set_ace_startup_state(True, 88, "ACE 网页已启动，正在等待自动接口")
 
@@ -153,10 +153,10 @@ def test_ace_startup_poll_finishes_when_workbench_is_ready(tmp_path, monkeypatch
 
     bridge._poll_ace_startup_status()
 
-    assert bridge.aceStartupBusy is False
-    assert bridge.aceStartupProgress == 100
+    assert bridge.aceStartupBusy is True
+    assert bridge.aceStartupProgress >= 88
     assert bridge.aceApiReady is False
-    assert "工作台已启动" in bridge.aceStartupStatus
+    assert "等待 API 服务" in bridge.aceStartupStatus
 
 
 def test_local_tts_rewrite_segment_pads_instead_of_extreme_time_stretch():
