@@ -737,30 +737,6 @@ ApplicationWindow {
                         }
                     }
 
-                    SettingsLabel { text: "实验功能" }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        SecondaryButton {
-                            text: "生成样例"
-                            Layout.fillWidth: true
-                            onClicked: if (root.bridge) root.bridge.generateMockAudio()
-                        }
-                        SecondaryButton {
-                            text: "检测对齐"
-                            Layout.fillWidth: true
-                            onClicked: if (root.bridge) root.bridge.evaluateAlignment()
-                        }
-                    }
-                    SecondaryButton {
-                        text: root.bridge && root.bridge.lyricRewriteBusy ? "改词唱生成中" : "改词唱实验版"
-                        enabled: !(root.bridge && root.bridge.lyricRewriteBusy)
-                        Layout.fillWidth: true
-                        onClicked: {
-                            root.rewriteLyricIndex = root.bridge ? root.bridge.currentLyricIndex : -1
-                            if (root.rewriteLyricIndex >= 0)
-                                rightPaneRewriteText.text = root.bridge && root.bridge.currentLyric.length > 0 ? root.bridge.currentLyric : ""
-                        }
-                    }
                 }
             }
         }
