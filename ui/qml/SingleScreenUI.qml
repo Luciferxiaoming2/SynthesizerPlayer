@@ -33,6 +33,7 @@ ApplicationWindow {
     property real uiScale: Math.max(0.62, Math.min(1.35, Math.min(width / designWidth, height / designHeight)))
     property real tonePreviewValue: 0.0
     property int rewriteLyricIndex: -1
+    property bool morePanelOpen: false
     property var actionCooldowns: ({})
 
     function themePalette(index) {
@@ -43,8 +44,8 @@ ApplicationWindow {
                 panel: "#eef1f7",
                 panelSoft: "#e7ebf3",
                 panelLine: "#cbd2df",
-                accent: "#cf2f7f",
-                accent2: "#b51f6c",
+                accent: "#4b8fe8",
+                accent2: "#256fc8",
                 teal: "#0d9b7f",
                 textMain: "#182033",
                 textMuted: "#5e687a",
@@ -677,13 +678,6 @@ ApplicationWindow {
                         }
                     }
 
-                    SettingsLabel { text: "歌曲库位置" }
-                    SecondaryButton {
-                        text: "选择歌曲库目录"
-                        Layout.fillWidth: true
-                        onClicked: songsFolderDialog.open()
-                    }
-
                     SettingsLabel { text: "歌词与分离" }
                     RowLayout {
                         Layout.fillWidth: true
@@ -740,24 +734,6 @@ ApplicationWindow {
                             wrapMode: Text.WordWrap
                         }
                     }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        SecondaryButton {
-                            text: "生成歌词"
-                            Layout.fillWidth: true
-                            onClicked: if (root.bridge) root.bridge.generateLyrics()
-                        }
-                        SecondaryButton {
-                            text: "导入歌词"
-                            Layout.fillWidth: true
-                            onClicked: {
-                                root.fileTarget = "lyrics"
-                                inputDialog.nameFilters = ["歌词文件 (*.lrc *.srt)", "所有文件 (*)"]
-                                inputDialog.open()
-                            }
-                        }
-                    }
-
                     SettingsLabel { text: "输出与插件" }
                     RowLayout {
                         Layout.fillWidth: true
@@ -1232,7 +1208,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: "保存歌曲库"
+                    text: "本地歌曲库"
                     color: root.textMuted
                     font.pixelSize: 13
                     Layout.leftMargin: 5
@@ -1360,7 +1336,7 @@ ApplicationWindow {
                         }
                     }
                     SecondaryButton {
-                        text: "↻ 扫描 save"
+                        text: "↻ 刷新曲库"
                         Layout.fillWidth: true
                         onClicked: if (root.bridge && root.acceptUiAction("scanSongs", 700)) root.bridge.scanSongs()
                     }
@@ -1374,10 +1350,9 @@ ApplicationWindow {
                         onClicked: if (root.bridge) root.bridge.openSongsRootFolder()
                     }
                     SecondaryButton {
-                        text: "当前歌曲目录"
-                        enabled: root.bridge && root.bridge.songNames.length > 0
+                        text: "更多"
                         Layout.fillWidth: true
-                        onClicked: if (root.bridge) root.bridge.openCurrentSongFolder()
+                        onClicked: root.morePanelOpen = !root.morePanelOpen
                     }
                 }
 
@@ -1390,7 +1365,7 @@ ApplicationWindow {
                         onClicked: if (root.bridge && root.acceptUiAction("deleteSong", 500)) {
                             var name = root.bridge.songNames.length > songList.currentIndex ? root.bridge.songNames[songList.currentIndex] : "选中歌曲"
                             deleteConfirmPopup.titleText = "确认删除选中歌曲"
-                            deleteConfirmPopup.message = "将从 save 歌曲库中删除“" + name + "”及其工程文件、歌词和 AI 改唱试听内容。此操作不可撤销。"
+                            deleteConfirmPopup.message = "将从本地歌曲库中删除“" + name + "”及其工程文件、歌词和 AI 改唱试听内容。此操作不可撤销。"
                             deleteConfirmPopup.action = "delete"
                             deleteConfirmPopup.songIndex = songList.currentIndex
                             deleteConfirmPopup.open()
@@ -1402,13 +1377,146 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         onClicked: if (root.bridge && root.acceptUiAction("clearSongList", 900)) {
                             deleteConfirmPopup.titleText = "确认清空歌曲库"
-                            deleteConfirmPopup.message = "将从 save 歌曲库中删除当前列表里的 " + root.bridge.songNames.length + " 首歌曲及其工程文件、歌词和 AI 改唱试听内容。此操作不可撤销。"
+                            deleteConfirmPopup.message = "将从本地歌曲库中删除当前列表里的 " + root.bridge.songNames.length + " 首歌曲及其工程文件、歌词和 AI 改唱试听内容。此操作不可撤销。"
                             deleteConfirmPopup.action = "clear"
                             deleteConfirmPopup.songIndex = -1
                             deleteConfirmPopup.open()
                         }
                     }
                 }
+            }
+        }
+
+        Rectangle {
+            id: morePaneScrim
+            visible: root.morePanelOpen
+            z: 8
+            anchors.left: leftPane.left
+            anchors.right: rightPane.left
+            anchors.top: topBar.bottom
+            anchors.bottom: bottomBar.top
+            color: "transparent"
+
+            MouseArea {
+                anchors.fill: parent
+                onClicked: root.morePanelOpen = false
+            }
+        }
+
+        Rectangle {
+            id: morePane
+            z: 9
+            width: leftPane.width
+            anchors.top: leftPane.top
+            anchors.bottom: leftPane.bottom
+            x: root.morePanelOpen ? leftPane.x : leftPane.x - width
+            opacity: root.morePanelOpen ? 1 : 0
+            visible: opacity > 0.02
+            color: root.surface
+            border.color: root.panelLine
+            radius: 0
+
+            Behavior on x { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+            Behavior on opacity { NumberAnimation { duration: 140 } }
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: 12
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: "更多"
+                        color: root.textMain
+                        font.pixelSize: 20
+                        font.bold: true
+                        Layout.fillWidth: true
+                    }
+                    IconButton {
+                        label: "×"
+                        tip: "关闭"
+                        Layout.preferredWidth: 38
+                        Layout.preferredHeight: 38
+                        onClicked: root.morePanelOpen = false
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: root.panelLine
+                }
+
+                Text {
+                    text: "歌词工具"
+                    color: root.textMain
+                    font.pixelSize: 14
+                    font.bold: true
+                    Layout.fillWidth: true
+                }
+                Text {
+                    text: "没有歌词时可以先生成；已有 LRC/SRT 文件时可直接导入同步。"
+                    color: root.textMuted
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    SecondaryButton {
+                        text: "生成歌词"
+                        enabled: root.bridge && root.bridge.songNames.length > 0 && !root.bridge.lyricsGenerationBusy
+                        Layout.fillWidth: true
+                        onClicked: {
+                            if (root.bridge)
+                                root.bridge.generateLyrics()
+                        }
+                    }
+                    SecondaryButton {
+                        text: "导入歌词"
+                        enabled: root.bridge && root.bridge.songNames.length > 0
+                        Layout.fillWidth: true
+                        onClicked: {
+                            root.fileTarget = "lyrics"
+                            inputDialog.nameFilters = ["歌词文件 (*.lrc *.srt)", "所有文件 (*)"]
+                            inputDialog.open()
+                        }
+                    }
+                }
+
+                Text {
+                    text: "文件位置"
+                    color: root.textMain
+                    font.pixelSize: 14
+                    font.bold: true
+                    Layout.topMargin: 8
+                    Layout.fillWidth: true
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    SecondaryButton {
+                        text: "打开曲库"
+                        Layout.fillWidth: true
+                        onClicked: if (root.bridge) root.bridge.openSongsRootFolder()
+                    }
+                    SecondaryButton {
+                        text: "当前歌曲目录"
+                        enabled: root.bridge && root.bridge.songNames.length > 0
+                        Layout.fillWidth: true
+                        onClicked: if (root.bridge) root.bridge.openCurrentSongFolder()
+                    }
+                }
+
+                Text {
+                    text: "这里保存导入歌曲、分离音轨、歌词和改唱试听内容，不需要手动配置。"
+                    color: root.textMuted
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                Item { Layout.fillHeight: true }
             }
         }
 
@@ -2027,7 +2135,7 @@ ApplicationWindow {
                 anchors.leftMargin: 34
                 anchors.rightMargin: 34
                 anchors.topMargin: 34
-                anchors.bottomMargin: 32
+                anchors.bottomMargin: 10
                 spacing: 18
 
                 RowLayout {
@@ -2236,8 +2344,7 @@ ApplicationWindow {
                 }
 
                 Rectangle {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: Math.min(parent.width * 0.92, 760)
+                    Layout.fillWidth: true
                     Layout.preferredHeight: 126
                     radius: 14
                     color: root.panel

@@ -177,6 +177,23 @@ def ace_runtime_dir_for_root(root: Path) -> Path | None:
     return None
 
 
+def resolve_ace_api_launcher(runtime_dir: Path, port: int) -> tuple[Path | None, list[str]]:
+    scripts_dir = runtime_dir / ".venv" / "Scripts"
+    bundled_api = scripts_dir / "acestep-api.exe"
+    if bundled_api.exists():
+        return bundled_api, ["--host", "127.0.0.1", "--port", str(port)]
+
+    bundled_python = scripts_dir / "python.exe"
+    if bundled_python.exists():
+        return bundled_python, ["-m", "acestep.api", "--host", "127.0.0.1", "--port", str(port)]
+
+    uv_path = shutil.which("uv")
+    if uv_path is not None:
+        return Path(uv_path), ["run", "--no-sync", "acestep-api", "--host", "127.0.0.1", "--port", str(port)]
+
+    return None, []
+
+
 class ImportSongWorker(QObject):
     progress = pyqtSignal(int, str)
     finished = pyqtSignal(object, str, str)
@@ -237,7 +254,8 @@ class AceStartupPreflightWorker(QObject):
         payload: dict[str, object] = {
             "api_ready": False,
             "runtime_dir": None,
-            "uv_path": None,
+            "launcher_path": None,
+            "launcher_args": [],
             "killed": [],
             "error": "",
         }
@@ -251,14 +269,16 @@ class AceStartupPreflightWorker(QObject):
             payload["error"] = "未找到 ACE-Step-1.5 运行目录，请先放到 plugins/runtime/ACE-Step-1.5。"
             self.finished.emit(payload)
             return
-        uv_path = shutil.which("uv")
-        if uv_path is None:
-            payload["error"] = "未找到 uv 命令，无法自动启动 ACE。请先确认 uv 已加入 PATH。"
+
+        launcher_path, launcher_args = resolve_ace_api_launcher(runtime_dir, self._port)
+        if launcher_path is None:
+            payload["error"] = "未找到 ACE 启动程序。请确认 plugins/runtime/ACE-Step-1.5/.venv/Scripts/acestep-api.exe 已随安装包放置。"
             self.finished.emit(payload)
             return
 
         payload["runtime_dir"] = str(runtime_dir)
-        payload["uv_path"] = uv_path
+        payload["launcher_path"] = str(launcher_path)
+        payload["launcher_args"] = launcher_args
         payload["killed"] = kill_processes_on_port(self._port)
         self.finished.emit(payload)
 
@@ -2156,8 +2176,11 @@ class WorkbenchBridge(QObject):
             self._set_status(error)
             return
         runtime_dir_text = str(data.get("runtime_dir") or "")
-        uv_path = str(data.get("uv_path") or "")
-        if not runtime_dir_text or not uv_path:
+        launcher_path = str(data.get("launcher_path") or "")
+        launcher_args = data.get("launcher_args") or []
+        if not isinstance(launcher_args, list):
+            launcher_args = []
+        if not runtime_dir_text or not launcher_path:
             self._set_ace_startup_state(False, 0, "ACE 启动失败：运行环境不完整。")
             self._set_status(self._ace_startup_status)
             return
@@ -2166,25 +2189,17 @@ class WorkbenchBridge(QObject):
             self._set_ace_startup_state(True, 14, f"已释放 {ACE_API_PORT} 端口：{', '.join(killed)}")
         else:
             self._set_ace_startup_state(True, 14, f"{ACE_API_PORT} 端口可用，正在启动 ACE")
-        self._start_ace_process(Path(runtime_dir_text), uv_path)
+        self._start_ace_process(Path(runtime_dir_text), launcher_path, [str(arg) for arg in launcher_args])
 
     def _cleanup_ace_preflight_thread(self) -> None:
         self._ace_preflight_thread = None
         self._ace_preflight_worker = None
 
-    def _start_ace_process(self, runtime_dir: Path, uv_path: str) -> None:
+    def _start_ace_process(self, runtime_dir: Path, launcher_path: str, launcher_args: list[str]) -> None:
         process = QProcess(self)
         process.setWorkingDirectory(str(runtime_dir))
-        process.setProgram(uv_path)
-        process.setArguments([
-            "run",
-            "--no-sync",
-            "acestep-api",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(ACE_API_PORT),
-        ])
+        process.setProgram(launcher_path)
+        process.setArguments(launcher_args)
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         process.started.connect(self._handle_ace_process_started)
         process.readyReadStandardOutput.connect(self._handle_ace_process_output)
@@ -3828,11 +3843,17 @@ def resolve_demucs_python(root: Path) -> str:
         except OSError:
             configured_path = ""
         if configured_path:
-            return configured_path
+            configured = Path(configured_path)
+            if not configured.is_absolute():
+                configured = root / configured
+            if configured.exists():
+                return configured_path if Path(configured_path).is_absolute() else str(configured)
 
     candidates = [
         root / "plugins" / "models" / "python" / "python.exe",
+        root / "plugins" / "models" / "python" / "Scripts" / "python.exe",
         root / "python" / "python.exe",
+        root / "python" / "Scripts" / "python.exe",
     ]
     for candidate in candidates:
         if candidate.exists():
